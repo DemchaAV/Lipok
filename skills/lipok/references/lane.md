@@ -3,7 +3,7 @@
 The Manager leads each lane at the level of **chunks**: it starts the worker, hands it a chunk,
 checks its plan against the whole picture, verifies what it calls ready, carries decisions and
 watches that it is alive and moving. The items inside the chunk are the worker's
-(`references/worker.md`). Design: `docs/architecture.md` of the Lipok repository (github.com/DemchaAV/Lipok), sections 3, 3а, 5–8.
+(`references/worker.md`). Design: `docs/architecture.md` of the Lipok repository (github.com/DemchaAV/Lipok), sections 3, 3a, 5–8.
 
 ## Names
 
@@ -44,7 +44,7 @@ One line by `local_…` id: `<TYPE> <key> — <path>`. Anything more goes into a
 
 | Type | When | Path |
 |---|---|---|
-| `CHUNK <ck>` | a new chunk (preceded by «Используй скилл `lipok`, роль worker.») | the chunk brief |
+| `CHUNK <ck>` | a new chunk (preceded by "Use the `lipok` skill, role worker.") | the chunk brief |
 | `GO <ck>` | the plan fits the whole picture | — |
 | `REDIRECT <key or ck>` | the plan or an item goes the wrong way; a `VERIFY FAIL` | a note: what is wrong against the whole picture, how it should go |
 | `NOTE <key or ck>` | a fact from another lane or from the user that touches this chunk | a note |
@@ -66,12 +66,12 @@ replaced on the user's turn: propose a card and send a `PushNotification`.
   folder becomes `<branch_name>-<6 hex>`, known only after the worker's first turn (2026-11-01);
 - `cwd` only when the project is not this session's folder: Windows form; the app may show a
   **Trust repository** button the user must click (2026-11-02, 2026-11-11);
-- `name` = the branch name, `title: "<task title> — полоса <N>"`;
-- `prompt`: «Ты — воркер полосы <N> задачи Lipok <tid> (проект <repo>). Используй скилл
-  `lipok`, роль worker. Manager — `<Manager local id>`. Первый ход: отправь Manager строку
-  `LANE <N> <папка>`, где папка — `pwd -W | sed 's/[^A-Za-z0-9]/-/g'` (проверь, что
-  `~/.claude/projects/<папка>` существует), и закончи ход. Дальше куски приходят сообщениями
-  `CHUNK <ключ> — <путь брифа>`.»;
+- `name` = the branch name, `title: "<task title> — lane <N>"`;
+- `prompt`: "You are the worker of lane <N> of Lipok task <tid> (project <repo>). Use the
+  `lipok` skill, role worker. The Manager is `<Manager local id>`. First turn: send the Manager
+  the line `LANE <N> <folder>`, where folder is `pwd -W | sed 's/[^A-Za-z0-9]/-/g'` (check that
+  `~/.claude/projects/<folder>` exists), and end the turn. Chunks then arrive as messages
+  `CHUNK <key> — <brief path>`.";
 - `background`: the task's goal in two sentences and the decisions it rests on, with dates.
 
 Do not pass a permission mode: the worker inherits yours, and sessions in one mode get each
@@ -80,8 +80,8 @@ other's messages without approval. Then `$A set $L worker=<id> branch-name=<bran
 
 ## Hand out a chunk
 
-1. **Pick it** from the task's cut (`<task>/decomposition/cut.md`; `decomposition.md`, «Handing
-   out by waves»): the lowest chunk not yet handed out whose `AFTER` chunks are all `DONE`. None →
+1. **Pick it** from the task's cut (`<task>/decomposition/cut.md`; `decomposition.md`, "Handing
+   out by waves"): the lowest chunk not yet handed out whose `AFTER` chunks are all `DONE`. None →
    the lane waits. `paused: yes` — hand nothing out.
 2. `$A chunk $L --chunk K<n>` → `BRIEF`, `PLAN`, `LANE-STATE`, `CHUNK-KEY`.
 3. **Mark** the chunk's items `[~]` in the task's plan with `crlf-replace.py`; rebuild the
@@ -89,7 +89,7 @@ other's messages without approval. Then `$A set $L worker=<id> branch-name=<bran
 4. **The brief** to `BRIEF` (a quoted heredoc):
 
    ```text
-   Используй скилл `lipok`, роль worker.
+   Use the `lipok` skill, role worker.
    CHUNK: <ck>
    TITLE: <what the chunk delivers, one line>
    ITEMS:
@@ -112,14 +112,14 @@ other's messages without approval. Then `$A set $L worker=<id> branch-name=<bran
    allowed something they did not say in chat.
 5. **A fresh context for a later chunk** (not for the first: the session is new). Optional: the
    worker keeps its state in files and its items run in fresh executors. To clear it anyway, stop
-   your worker watch first, then `clear_session`. A reply «classifier gave no verdict … a hook
-   changed this call's input» is not a refusal: repeat the call once with exactly the quoted input,
+   your worker watch first, then `clear_session`. A reply "classifier gave no verdict … a hook
+   changed this call's input" is not a refusal: repeat the call once with exactly the quoted input,
    alone in that response (2026-11-10, 2026-11-11). Refused after that (2026-11-10, a worktree
-   worker) — go on without the clear and add to the brief, before `CHUNK:`, «Предыдущий кусок
-   закрыт; работай только над этим.»
-6. **Send** «Используй скилл `lipok`, роль worker. CHUNK <ck> — <brief path>» (`$A chunk` has
+   worker) — go on without the clear and add to the brief, before `CHUNK:`, "The previous chunk
+   is closed; work only on this one."
+6. **Send** "Use the `lipok` skill, role worker. CHUNK <ck> — <brief path>" (`$A chunk` has
    already stamped `last-line` and `progress-line`).
-7. **Arm the watches** («Supervision» below): the worker watch and the stall watch.
+7. **Arm the watches** ("Supervision" below): the worker watch and the stall watch.
 
 ## When the worker sends a line
 
@@ -135,31 +135,31 @@ a `PLAN`, `READY`, `MERGED` or `CHUNK_DONE`), clears `death-turn`, opens the dec
 - any other item line (`READY`, `DECISION`, `BLOCKED`, `ALIVE`, `PAUSED`): its key must be the
   lane-state's `key`.
 
-- **`LANE <N> <folder>`** — «Start the worker».
+- **`LANE <N> <folder>`** — "Start the worker".
 - **`PLAN <ck> — <plan.md>`** — read the plan once. Check it against the whole picture: the other
   chunks' areas and plans, the contracts, the DRs, the task's acceptance, what the plan records.
   - It fits → `GO <ck>`; `$A set $L chunk-status=WORKING`; tell the user in two or three lines
     what the chunk will do, in what order.
   - It goes the wrong way and the fix stays inside the chunk's scope → a note, `REDIRECT <ck> —
-    <note>`. It needs a change of scope, a contract or the cut → `manager.md`, «Decisions».
+    <note>`. It needs a change of scope, a contract or the cut → `manager.md`, "Decisions".
 - **`READY <key> — <report>`** — `$A verify-pr <n> --repo <repo> --report <report> --area
   "<the brief's AREA>" --lane $L` (it sets `pr`, `pr-status` and the merge wait itself).
-  - `VERIFY OK` → plan: `[>]` with `= #<n> ОТКРЫТ
+  - `VERIFY OK` → plan: `[>]` with `= #<n> OPEN
     \`<sha>\`` and the report's `<note_field>` line; read that line against the whole picture (a
     name another chunk expects, a contract, a DR) and send `NOTE`/`REDIRECT` where it clashes;
     the merge queue (`manager.md`); chat: the `<note_field>` line and the PR link;
-    `PushNotification` «PR #<n> готов к мержу: <one line>; CI зелёный».
-  - `VERIFY FAIL` → a note with every failing point; `REDIRECT <key> — <note>`. Never «готов к
-    мержу» on a `FAIL`. A `required check not registered` point is CI that never started (the
-    worker's watch says `CI-MISSING`): the note says so, not «fix the code».
-- **`MERGED <key> — <report>`** or the user's «влил» — «When a PR is merged».
+    `PushNotification` "PR #<n> ready to merge: <one line>; CI green".
+  - `VERIFY FAIL` → a note with every failing point; `REDIRECT <key> — <note>`. Never "ready to
+    merge" on a `FAIL`. A `required check not registered` point is CI that never started (the
+    worker's watch says `CI-MISSING`): the note says so, not "fix the code".
+- **`MERGED <key> — <report>`** or the user's "merged" — "When a PR is merged".
 - **`DECISION <key> — <report>`** — read the report's `DECISION:` block (a chunk-level
   `DECISION <ck> — <note>` from the plan stage: the note holds it); `$A set $L
-  chunk-status=DECISION`; `manager.md`, «Decisions».
+  chunk-status=DECISION`; `manager.md`, "Decisions".
 - **`BLOCKED <key> — <report>`** — read the report's user block (or the chunk note); `$A set $L chunk-status=BLOCKED`;
-  post it; `PushNotification` «Заблокировано: <item>»; ask the user.
+  post it; `PushNotification` "Blocked: <item>"; ask the user.
 - **`PAUSED`** — one chat line with what it stopped.
-- **`ALIVE <key> — <text>`** — the answer to `PING`: «Supervision».
+- **`ALIVE <key> — <text>`** — the answer to `PING`: "Supervision".
 - **`CHUNK_DONE <ck> — <done.md>`** — read `done.md`; `$A set $L chunk-status=DONE`; stop the
   stall watch, and the worker watch too unless the next chunk goes out now; tell the user in three to five lines (what was done, PRs, decisions, `P1:` found);
   a contract or assembly chunk, or a chunk the user asked to review: the chunk reviewer
@@ -167,17 +167,17 @@ a `PLAN`, `READY`, `MERGED` or `CHUNK_DONE`), clears `death-turn`, opens the dec
 
 ## When a PR is merged
 
-On the worker's `MERGED` line, or the user's «влил».
+On the worker's `MERGED` line, or the user's "merged".
 
 1. `$A book $L <n> --repo <repo>` — it confirms the merge on GitHub and books it in `$L` (`booked`,
    `pr=none`, `pr-status=none`, the merge wait). `ALREADY BOOKED` → stop. `NOT MERGED` → the line
    was wrong; check GitHub, tell the user, stop.
-2. Plan: the item's `[>]` — or `[~]`, if the user merged before READY — → `[x]` with `ВЛИТ <date>
+2. Plan: the item's `[>]` — or `[~]`, if the user merged before READY — → `[x]` with `MERGED <date>
    \`<merge sha>\`` from the `BOOKED` line; a stage whose last step is done → `[x]`.
 3. Memory: the `memory_file` and its line in `MEMORY.md` beside it.
-4. Dashboard: rebuild and send; one chat line «#<n> влит».
-5. On «влил» before the worker's line: send nothing — its own watch sees the merge. If the worker
-   is gone or its watch is gone (after a restart), `RESUME <key>` with a note «#<n> влит».
+4. Dashboard: rebuild and send; one chat line "#<n> merged".
+5. On "merged" before the worker's line: send nothing — its own watch sees the merge. If the worker
+   is gone or its watch is gone (after a restart), `RESUME <key>` with a note "#<n> merged".
 6. Other lanes with an open PR whose files overlap this one's (`gh pr view <m> --json files`) →
    `SYNC <their key>` to each.
 
@@ -185,7 +185,7 @@ On the worker's `MERGED` line, or the user's «влил».
 
 Nothing the worker does inside a chunk reaches you except its lines, so you watch that it is alive
 and moving. Two watches per lane, both `run_in_background`; before arming one into a field, stop
-the one the field names («Stopping a watch»).
+the one the field names ("Stopping a watch").
 
 - **Worker watch:** `bash $SK/watch-session.sh <worker-dir> --quiet-min <quiet_window_min>` →
   `$A set $L worker-watch=<task id>`. It counts the transcripts of the worker's subagents, so an
@@ -209,11 +209,11 @@ names no wait, holds an item that is not `MERGED`/`REVIEWED`, and sent no line s
 
 | Watch line | What to do |
 |---|---|
-| `SESSION LIMIT <m>m <text>` | a usage limit, not a dead turn; you are limited too. A **timer** until the reset the text names plus 5 minutes (60 minutes if none), `$A set $L pending="limit <timer id>"`, one `PushNotification` with the reset time. On the timer: `RESUME <key>` with a note «лимит снят, продолжай»; re-arm; `pending=none` |
+| `SESSION LIMIT <m>m <text>` | a usage limit, not a dead turn; you are limited too. A **timer** until the reset the text names plus 5 minutes (60 minutes if none), `$A set $L pending="limit <timer id>"`, one `PushNotification` with the reset time. On the timer: `RESUME <key>` with a note "limit lifted, continue"; re-arm; `pending=none` |
 | `SESSION ERROR <m>m <text>` | the turn died on the model. `death-turn` equals the lane-state's `key` (it died on this item before, with no line from the worker since — every line resets `death-turn`) → the second death: switch the worker's model (`set_session_model`) and tell the user. Otherwise `$A set $L death-turn=<key>`; `RESUME <key>` with a note: what killed the turn, that it was the model, not the content; re-arm; one chat line |
-| `SESSION QUIET <m>m <file>` | facts, not words. `get_session` running → re-arm silently. The lane-state names a live wait (`watch`, or `gate-run` whose output still grows), or a lock it waits for (`$A lock show`) → re-arm silently. A **silent idle** (above) → `RESUME <key>` «отчёт и строка наверх»; the second in a row → tell the user the worker is losing the protocol. Anything else → `PING <key>`; re-arm |
+| `SESSION QUIET <m>m <file>` | facts, not words. `get_session` running → re-arm silently. The lane-state names a live wait (`watch`, or `gate-run` whose output still grows), or a lock it waits for (`$A lock show`) → re-arm silently. A **silent idle** (above) → `RESUME <key>` "report and a line up, please"; the second in a row → tell the user the worker is losing the protocol. Anything else → `PING <key>`; re-arm |
 | `SESSION OK after 12h` | re-arm silently |
-| `SESSION GONE`, `ERROR no such transcript folder`, `ERROR no transcript in` | `get_session`. Gone → «Replace a worker». There → `RESUME` with a note asking for one line `LANE <N> <папка>`, set `worker-dir` from the answer, re-arm |
+| `SESSION GONE`, `ERROR no such transcript folder`, `ERROR no transcript in` | `get_session`. Gone → "Replace a worker". There → `RESUME` with a note asking for one line `LANE <N> <folder>`, set `worker-dir` from the answer, re-arm |
 | `STALL QUIET` | `PING <key>`; re-arm the stall watch. No `ALIVE` before the next stall line → as a dead turn (`RESUME`), and tell the user |
 | `ALIVE` answer | read it against the facts above. Moving → re-arm. The same fix again and again, or work outside the chunk → `REDIRECT` or a decision for the user |
 | `STALL LOOP <key> attempt=<n>` | the item goes round in circles: `PAUSE <key>`, read the report, tell the user what was tried, `PushNotification`; the next step is the user's. If they say go on: `$A set $L loop-ack=<key>` (the key with its attempt), `RESUME`, re-arm — the next alarm comes `max_attempts` attempts later |
@@ -234,10 +234,10 @@ field to `none`.
 
 When the worker session is gone, or was archived. On the user's turn only.
 
-1. `start_session` as in «Start the worker», with `branch_name: lipok-<tid>-l<N>-r<k>`.
+1. `start_session` as in "Start the worker", with `branch_name: lipok-<tid>-l<N>-r<k>`.
 2. On its `LANE` line: `$A set $L worker=… worker-dir=… branch-name=…`.
-3. Send the chunk's brief again with a line before `CHUNK:` — «Ты заменяешь воркера, который
-   пропал. Состояние куска — в LANE-STATE и plan.md; открытый PR — #<n> на ветке <b> (или: нет).
-   Продолжи с того места.» The worker's open item continues with `$A bump` and an executor with
+3. Send the chunk's brief again with a line before `CHUNK:` — "You replace a worker that is gone.
+   The chunk's state is in LANE-STATE and plan.md; the open PR is #<n> on branch <b> (or: none).
+   Continue from there." The worker's open item continues with `$A bump` and an executor with
    `CONTINUE`. Uncommitted work in the old worktree is lost: tell the user.
 4. Arm both watches. Offer to archive the old worker; archive only on the user's yes.

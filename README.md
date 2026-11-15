@@ -104,8 +104,8 @@ The first run in a project writes its profile, `~/.lipok/projects/<owner>-<repo>
 (the gate command, base branch, author, `required_checks`, `max_lanes`, `max_ready_prs` …) —
 see `skills/lipok/references/project-profile.md`.
 
-In the Manager's session: «статус» (status), «влил» (I merged), «пауза» (pause), «продолжай»
-(resume), «стоп задачи» (stop the task).
+In the Manager's session say "status", "merged" (after you merge a PR), "pause", "resume" or
+"stop task" — in any language; the Manager matches the meaning and answers in your language.
 
 At the end of a task, `lipok.py usage` splits the tokens it spent between the Manager, the
 workers and the executors — read from the transcripts on disk, no model call.
@@ -125,7 +125,7 @@ skills/lipok/              the core: SKILL.md, references per role, scripts
 bin/lipok.js               the installer (npx … install / doctor / uninstall)
 skills/lipok-task/         the /lipok-task command
 tests/run.sh               the script tests: bash tests/run.sh skills/lipok/scripts/lipok.py <tmp dir>
-docs/architecture.md       the design (v6, in Russian)
+docs/architecture.md       the design (v6)
 ```
 
 ## Status

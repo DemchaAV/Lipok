@@ -52,12 +52,12 @@ enforces it mechanically; `verify-pr --area` enforces each chunk's area on every
 8. **One lane is right when** the widest wave is 1; a side of a seam would get fewer than two items
    (too fine — one lane does both); the areas cannot be separated without a contract the project
    cannot check; or the task is a day's work. Say why in one line when you show the cut.
-9. **Show the user** and hand out only after their «да»:
+9. **Show the user** and hand out only after their "yes":
    - a table: chunk, kind, wave, `AFTER`, area, items, acceptance;
    - each seam: the contract file and the CI check that holds it;
    - the lanes: `CUT OK lanes=<n>` and the first wave's hand-out (chunk → lane);
    - what stays sequential and why (the hot files and their owners).
-10. **After «да»:** `task-new … --lanes <n>`, then move the files into the task:
+10. **After "yes":** `task-new … --lanes <n>`, then move the files into the task:
     `<project>/cut-draft.md` → `<task>/decomposition/cut.md`, the scout's report →
     `<task>/decomposition/scout.md`. The cut file is the Manager's from now on.
 
@@ -95,11 +95,11 @@ DONE WHEN: …
 
 - A free lane (its `chunk-status` `none`, `DONE` or `DROPPED`) takes the lowest-numbered chunk not
   yet handed out whose `AFTER` chunks are all `DONE`. No such chunk → the lane waits; say so in
-  «статус».
+  "status".
 - Every brief's `AREA:` is the cut's `AREA` verbatim; `KNOWN:` names the contracts it reads and the
   chunks running beside it with their areas.
 - A merge in one lane that touches files under another lane's open PR → `SYNC` (`lane.md`,
-  «When a PR is merged»). With a clean cut this happens only across `AFTER`, never inside a wave.
+  "When a PR is merged"). With a clean cut this happens only across `AFTER`, never inside a wave.
 
 ## When the cut has to change
 

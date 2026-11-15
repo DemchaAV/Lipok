@@ -16,7 +16,7 @@ t() { # t <name> <expected exit> <expected substring> -- cmd...
 }
 t profile 0 "PROFILE OK" -- $A profile --repo o/r
 t hier-refused 4 "only the flat" -- $A task-new --repo o/r --title x --scheme hierarchical
-t task-new 0 "TASK t1" -- $A task-new --repo o/r --title "Чат" --lanes 2
+t task-new 0 "TASK t1" -- $A task-new --repo o/r --title "Café chat" --lanes 2
 TD="$LIPOK_HOME/projects/o-r/tasks/t1"; L="$TD/lanes/1/state.md"
 t lane-fields 0 "chunk-status: none" -- $A show "$L"
 t chunk 0 "CHUNK-KEY t1/L1/K1" -- $A chunk "$L" --chunk K1
@@ -25,7 +25,7 @@ t chunk-again 4 "REFUSED lane chunk" -- $A chunk "$L" --chunk K2
 t chunk-on-item 2 "Manager's lanes" -- $A chunk "$LS" --chunk K3
 t item-on-lane 2 "lane-state.md" -- $A item "$L" --chunk K1 --slug a --item "x"
 t item-wrong-chunk 4 "not K2" -- $A item "$LS" --chunk K2 --slug a --item "x"
-t item 0 "KEY t1/L1/K1/a#1" -- $A item "$LS" --chunk K1 --slug a --item "1 Пункт"
+t item 0 "KEY t1/L1/K1/a#1" -- $A item "$LS" --chunk K1 --slug a --item "1 Item"
 t item-busy 4 "REFUSED lane item" -- $A item "$LS" --chunk K1 --slug b --item "y"
 t bump 0 "KEY t1/L1/K1/a#2" -- $A bump "$LS"
 t set-item-unknown 4 "unknown keys: chunk-status" -- $A set "$LS" chunk-status=WORKING
@@ -49,7 +49,7 @@ $A set "$L" chunk-status=DONE >/dev/null
 t chunk-after-done 0 "CHUNK-KEY t1/L1/K2" -- $A chunk "$L" --chunk K2
 LS2="$TD/chunks/K2/lane-state.md"
 $A set "$L" chunk-status=WORKING >/dev/null
-$A item "$LS2" --chunk K2 --slug b --item "2 Пункт" >/dev/null
+$A item "$LS2" --chunk K2 --slug b --item "2 Item" >/dev/null
 t item-no-manager-fields 0 "absent" -- bash -c "grep -q 'death-turn\|pending' '$LS2' && echo present || echo absent"
 for i in 1 2 3; do $A bump "$LS2" >/dev/null; done
 t loop-k2 0 "STALL LOOP t1/L1/K2/b#4" -- $A stall-check "$L" --repo o/r
@@ -149,8 +149,8 @@ t line-answered-none 0 "no decision wait open" -- $A line "$L" ANSWERED
 # planned attempts: batches the plan declares are not a loop (finding 1)
 $A set "$L" loop-ack=none chunk-status=WORKING pr-status=none "progress-line=$(date -u +%FT%TZ)" >/dev/null
 $A set "$LS2" status=DROPPED >/dev/null
-t item-attempts-bad 2 "--attempts must be" -- $A item "$LS2" --chunk K2 --slug c --item "3 Пункт" --attempts 0
-t item-attempts 0 "KEY t1/L1/K2/c#1" -- $A item "$LS2" --chunk K2 --slug c --item "3 Пункт" --attempts 4
+t item-attempts-bad 2 "--attempts must be" -- $A item "$LS2" --chunk K2 --slug c --item "3 Item" --attempts 0
+t item-attempts 0 "KEY t1/L1/K2/c#1" -- $A item "$LS2" --chunk K2 --slug c --item "3 Item" --attempts 4
 for i in 1 2 3 4 5; do $A bump "$LS2" >/dev/null; done   # attempt 6 = 4 planned + 2 retries
 t planned-not-loop 0 "STALL OK" -- $A stall-check "$L" --repo o/r
 $A bump "$LS2" >/dev/null                                 # attempt 7 > 3 + 4 - 1
@@ -161,7 +161,7 @@ t planned-acked-ok 0 "STALL OK" -- $A stall-check "$L" --repo o/r
 $A bump "$LS2" >/dev/null
 t planned-acked-loop 0 "STALL LOOP t1/L1/K2/c#11" -- $A stall-check "$L" --repo o/r
 $A set "$LS2" status=DROPPED >/dev/null
-$A item "$LS2" --chunk K2 --slug d --item "4 Пункт" >/dev/null
+$A item "$LS2" --chunk K2 --slug d --item "4 Item" >/dev/null
 t item-attempts-default 0 "1" -- $A get "$LS2" planned-attempts
 
 # wait-pr.sh with a fake gh on PATH: required checks (finding 3)

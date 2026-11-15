@@ -55,7 +55,7 @@ nothing else upward: not `WORKING`, not CI events, not `FIX`, not reruns. No pho
 
 | Line | Do |
 |---|---|
-| `CHUNK <ck> — <brief>` (after «Используй скилл `lipok`, роль worker.») | «The chunk», from step 1 |
+| `CHUNK <ck> — <brief>` (after "Use the `lipok` skill, role worker.") | "The chunk", from step 1 |
 | `GO <ck>` | start the items (step 3) |
 | `REDIRECT <key or ck> — <note>` | the Manager sees a wrong course from the whole picture. Read the note; change the plan or the item as it says; a changed plan goes up again as `PLAN`. If the note changes scope or a contract, answer `DECISION` instead of acting — with an item key and its report, or, at the plan stage, `DECISION <ck> — <task>/chunks/<K>/notes/decision-<n>.md` (the question, options, recommended first, what each changes) |
 | `NOTE <key or ck> — <file>` | a fact from another lane or the user: read it; it changes your plan only as the file says |
@@ -69,7 +69,7 @@ nothing else upward: not `WORKING`, not CI events, not `FIX`, not reruns. No pho
 holds files that differ from the tree, a sabotage was cut off — restore them and confirm the
 bytes; read `git status` and compare HEAD with the report.
 
-If the user writes «влил», «пауза», «продолжай» or «статус» in your window, tell them in one line
+If the user writes "merged", "pause", "resume" or "status" in your window, tell them in one line
 that these phrases go to the Manager session (name it), and stop.
 
 ## The chunk
@@ -92,7 +92,7 @@ that these phrases go to the Manager session (name it), and stop.
    2. The brief, `<task>/chunks/<K>/briefs/<slug>-<attempt>.md` (a quoted heredoc):
 
       ```text
-      Используй скилл `lipok`, роль executor.
+      Use the `lipok` skill, role executor.
       KEY: <key>
       START AT: 1   (or 9.4 — after the worker's gate under `before_push`)
       ITEM: <the plan line, verbatim>
@@ -112,8 +112,8 @@ that these phrases go to the Manager session (name it), and stop.
       SCOPE: <in / out>
       ```
 
-   3. Start the executor: `Agent`, `general-purpose`, prompt «Используй скилл `lipok`, роль
-      executor: прочитай `~/.claude/skills/lipok/references/item.md`. BRIEF: <brief path>.»
+   3. Start the executor: `Agent`, `general-purpose`, prompt "Use the `lipok` skill, role
+      executor: read `~/.claude/skills/lipok/references/item.md`. BRIEF: <brief path>."
       It runs in the background; end the turn. One executor at a time; never two items in one tree.
    4. **Its answer** (first line):
       - `ITEM DONE` → step 4.

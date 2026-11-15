@@ -77,8 +77,8 @@ function doctor() {
   else warn(`no ${claude} yet — open the Claude Code app once`);
 
   const planStatus = path.join(skillsDir([]), "plan-status", "plan_status.py");
-  if (fs.existsSync(planStatus)) ok("plan-status skill (plan position in «статус»)");
-  else warn("optional plan-status skill not found — «статус» will not show the plan's position");
+  if (fs.existsSync(planStatus)) ok('plan-status skill (plan position in "status")');
+  else warn("optional plan-status skill not found: the status answer will not show the plan's position");
 
   console.log(good ? "Ready." : "Fix the MISS lines, then run the command again.");
   return good;

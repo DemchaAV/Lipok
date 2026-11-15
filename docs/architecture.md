@@ -1,289 +1,289 @@
-# Lipok — плоская мультиагентная разработка, v6
+# Lipok — flat multi-agent development, v6
 
-> Переименование 2026-11-15: харнес назывался **Archon** (имя занято другим ИИ-проектом), теперь **Lipok** — скиллы `lipok` и `lipok-task`, скрипт `lipok.py`, состояние `~/.lipok`, ветки полос `lipok-<tid>-l<N>`. Ссылки вида «v5, раздел N» ведут на прежний дизайн, который в репозиторий не входит.
+> Renamed 2026-11-15: the harness used to be called **Archon** (the name is taken by another AI project), now it is **Lipok** — skills `lipok` and `lipok-task`, script `lipok.py`, state `~/.lipok`, lane branches `lipok-<tid>-l<N>`. References of the form "v5, section N" point to the previous design, which is not part of the repository.
 
-Дата: 2026-11-11. Основа — v5 (`multi_agent_architecture_v5.md`); здесь только то, что меняется.
-Всё, чего v6 не называет, действует как в v5: ограничения платформы (раздел 4), статусы пункта
-(раздел 11; `READY` по-прежнему ставит только Manager — после `verify-pr`), сбои и
-восстановление (раздел 19), профиль проекта (раздел 16), правила раздела 23 — кроме 5 (в v6 один
-открытый PR на полосу), 7 (кусок ведёт воркер, раздел 5) и 17 (одноразовые теперь контексты
-исполнителей пунктов, а не воркеров; состояние — по-прежнему в файлах).
+Date: 2026-11-11. Basis — v5 (`multi_agent_architecture_v5.md`); this document covers only what changes.
+Everything v6 does not name works as in v5: platform constraints (section 4), item statuses
+(section 11; `READY` is still set only by the Manager — after `verify-pr`), failures and
+recovery (section 19), project profile (section 16), the rules of section 23 — except 5 (in v6, one
+open PR per lane), 7 (the chunk is led by the worker, section 5) and 17 (the disposable contexts are now those of
+item executors, not workers; state still lives in files).
 
-## 0. Что изменилось против v5
+## 0. What changed versus v5
 
-| Было в v5 | Стало в v6 | Почему |
+| In v5 | In v6 | Why |
 |---|---|---|
-| Две схемы: плоская и трёхуровневая | **Одна — плоская.** Трёхуровневая отложена (раздел 12) | Supervisor держится на обходах платформы: фраза «старт» (v5 §4, 1a), запрет очистки (3b), «внук» не будит «деда» (3a); вариант «б» сводит его к передатчику строк |
-| Ведущий полосы — Manager: бриф и очистка на каждый пункт, разбор CI, сверки | **Кусок ведёт воркер сам.** Manager ставит кусок и получает отчёты по результату | Контекст Manager рос со скоростью шагов (на прежней схеме три пункта давали огромную историю логов и сверок); Manager не доживал до конца задачи |
-| Чистый контекст на пункт — `clear_session` воркера | **Чистый контекст на пункт — свежий субагент внутри воркера** | Очистка ненадёжна: 2026-11-10 классификатор отклонил очистку своего простаивающего воркера (v5 §4, строка 2; пробы очистки сессии). Субагент стартует на любом ходу (v5 §4, строка 11) |
-| CI и мерж сторожит Manager (`wait-pr.sh`) | **Свою вахту PR держит воркер**; Manager проверяет результат одной строкой скрипта (`verify-pr`) | Логи CI, перезапуски и `SYNC` — детали исполнения, им не место в контексте Manager |
-| Вахта за транскриптом воркера ловит мёртвый ход | **Надзор Manager** (раздел 3а): та же вахта, плюс застой без сбоя, петля попыток, молчаливый простой, отчёт, не совпадающий с делом | Когда воркер ведёт кусок сам, сбой внутри него Manager иначе не увидит |
-| Manager — планировщик и сборщик | **Manager — интерфейс и руководитель**: общая картина, курс, решения, очередь мержей | Воркер с чистым контекстом видит свой кусок; только Manager видит, куда тот идёт относительно всего проекта |
+| Two schemes: flat and three-level | **One — flat.** Three-level is deferred (section 12) | The Supervisor relies on platform workarounds: the "start" phrase (v5 §4, 1a), the ban on clearing (3b), a "grandchild" does not wake the "grandparent" (3a); option "b" reduces it to a line relay |
+| The lane lead is the Manager: a brief and a clear for every item, CI triage, reconciliations | **The worker leads the chunk itself.** The Manager assigns the chunk and receives reports on the result | The Manager's context grew at the pace of the steps (under the old scheme three items produced a huge history of logs and reconciliations); the Manager did not survive to the end of the task |
+| Clean context per item — the worker's `clear_session` | **Clean context per item — a fresh subagent inside the worker** | Clearing is unreliable: on 2026-11-10 the classifier rejected clearing its own idle worker (v5 §4, row 2; session-clearing probes). A subagent starts on any turn (v5 §4, row 11) |
+| CI and merge are watched by the Manager (`wait-pr.sh`) | **The worker keeps its own PR watch**; the Manager checks the result with one script line (`verify-pr`) | CI logs, reruns and `SYNC` are execution details; they do not belong in the Manager's context |
+| A watch over the worker's transcript catches a dead turn | **Manager supervision** (section 3a): the same watch, plus a stall without a failure, an attempt loop, a silent idle, a report that does not match reality | When the worker leads the chunk itself, the Manager would otherwise not see a failure inside it |
+| The Manager is a planner and an assembler | **The Manager is the interface and the lead**: the big picture, the course, decisions, the merge queue | A worker with a clean context sees its chunk; only the Manager sees where it is heading relative to the whole project |
 
-## 1. Модель
+## 1. Model
 
 ```text
-Пользователь ⇄ Manager — одно окно на всю задачу; знает проект, план, решения, ход полос
+User ⇄ Manager — one window for the whole task; knows the project, the plan, the decisions, the lanes' progress
                   │
-                  │  «Интеграция чата» → нарезка (утверждает пользователь):
-                  │     K0  контракт: API чата, типы сообщений          → первым, вливается до остальных
-                  │     K1  бэкенд: хранение, API, уведомления (N пунктов) → Воркер A
-                  │     K2  фронтенд: экран, список, ввод (M пунктов)      → Воркер B
-                  │     K3  сборка: связать, e2e, включить фичу            → освободившийся воркер
+                  │  "Chat integration" → cut (approved by the user):
+                  │     K0  contract: chat API, message types          → first, merged before the rest
+                  │     K1  backend: storage, API, notifications (N items) → Worker A
+                  │     K2  frontend: screen, list, input (M items)      → Worker B
+                  │     K3  assembly: wire up, e2e, enable the feature   → whichever worker is free
                   │
-                  ├── Воркер A — свой worktree, ведёт кусок K1 сам
-                  │      пункт 1 → свежий субагент: замер, правка, тесты, ревью, PR
-                  │      пункт 2 → свежий субагент …
-                  │      сам: вахта PR, CI, конфликты с базой, гейт
-                  │      наверх: подплан · строка на пункт · PR готов · решение · блок · кусок сделан
+                  ├── Worker A — its own worktree, leads chunk K1 itself
+                  │      item 1 → fresh subagent: measure, edit, tests, review, PR
+                  │      item 2 → fresh subagent …
+                  │      itself: PR watch, CI, conflicts with the base, gate
+                  │      upward: chunk plan · a line per item · PR ready · decision · block · chunk done
                   │
-                  └── Воркер B — то же для K2
+                  └── Worker B — the same for K2
 ```
 
-Manager как в жизни: не стоит за спиной, но видит общую картину, читает короткие отчёты и
-вовремя говорит «не туда, надо по-другому». Воркер работает со своей колокольни — хорошо, но
-узко; поправки курса — работа Manager.
+The Manager as in real life: does not stand over your shoulder, but sees the big picture, reads short reports and
+says "wrong way, do it differently" in time. A worker works from its own vantage point — well, but
+narrowly; course corrections are the Manager's job.
 
-## 2. Роли
+## 2. Roles
 
-| Роль | Что это | Делает | Не делает |
+| Role | What it is | Does | Does not |
 |---|---|---|---|
-| **Пользователь** | человек | ставит задачу, утверждает нарезку и контракты, отвечает на решения, мержит | — |
-| **Manager** | сессия `/lipok-task` | нарезка; утверждение подпланов; поправки курса; надзор за живостью и ходом полос (раздел 3а); перенос фактов между полосами; решения с пользователем; проверка готовых PR; очередь мержей; ревью кусков; push на телефон; заводит воркеров на ходу пользователя | не пишет код; не читает логи CI, диффы и ход работы воркера; не мержит |
-| **Воркер** | сессия в своём worktree, закреплена за полосой; ведёт один кусок за раз | подплан куска; цикл по пунктам через субагентов; вахта своего PR; разбор CI; `SYNC`; гейт; отчёты | не выходит за свой кусок и его область кода; не решает за пользователя; не меняет контракт вне куска-контракта |
-| **Исполнитель пункта** | субагент воркера, один на пункт | пункт целиком с чистого контекста: замер, правка, тесты, диверсии, холодное ревью, коммит, PR; пишет отчёт пункта | не берёт следующий пункт; не ждёт CI часами (это воркер) |
-| **Разведчик** | субагент Manager | при нарезке читает код: модули, слои, швы, общие файлы | не решает нарезку |
-| **Ревьюер куска** | субагент Manager | независимое ревью куска-контракта до мержа и сборки до включения фичи; по желанию — любого куска в конце | не правит код |
+| **User** | a human | sets the task, approves the cut and the contracts, answers decisions, merges | — |
+| **Manager** | the `/lipok-task` session | the cut; approving chunk plans; course corrections; supervision of the lanes' liveness and progress (section 3a); carrying facts between lanes; decisions with the user; checking ready PRs; the merge queue; chunk reviews; push to the phone; starts workers on the user's turn | does not write code; does not read CI logs, diffs or the worker's work in progress; does not merge |
+| **Worker** | a session in its own worktree, bound to a lane; leads one chunk at a time | the chunk plan; the loop over items via subagents; the watch of its own PR; CI triage; `SYNC`; the gate; reports | does not step outside its chunk and its code area; does not decide for the user; does not change the contract outside a contract chunk |
+| **Item executor** | the worker's subagent, one per item | the whole item from a clean context: measure, edit, tests, sabotages, cold review, commit, PR; writes the item report | does not take the next item; does not wait for CI for hours (that is the worker's job) |
+| **The scout** | the Manager's subagent | during the cut, reads the code: modules, layers, seams, shared files | does not decide the cut |
+| **Chunk reviewer** | the Manager's subagent | independent review of a contract chunk before the merge and of the assembly before the feature is enabled; optionally — of any chunk at the end | does not edit code |
 
-## 3. Как Manager видит, что воркер идёт не туда
+## 3. How the Manager sees that a worker is heading the wrong way
 
-Manager не следит за шагами, но у него пять точек, где он видит курс, и каждая стоит строку-две
-контекста.
+The Manager does not follow the steps, but has five points where it sees the course, and each costs a line or two
+of context.
 
-1. **Подплан до первого пункта.** Воркер получил кусок, прочитал код своей области и пишет
-   подплан: пункты, порядок, что каждый меняет, какие контракты читает. Шлёт `PLAN`. Manager
-   сверяет с общей картиной — другие куски, контракты, решения `DR`, критерии приёмки — и отвечает
-   `GO` или `REDIRECT` с заметкой. Самая дешёвая поправка курса — до того, как написан код.
-2. **Строка на пункт.** Каждый влитый или готовый пункт даёт одну строку `<note_field>:` (по умолчанию `PLAN-NOTE:`) — что PR делает
-   и что измерено. Manager читает только её и замечает расхождение: «фронтенд ждёт поле `sentAt`,
-   а бэкенд в пункте 4 назвал его `createdAt`».
-3. **Проверка результата скриптом.** Строка «PR готов» проверяется одной командой
-   (`lipok.py verify-pr`): не черновик, HEAD отчёта — голова PR, CI зелёный на этом SHA, ревью
-   без открытых Blocker/Critical/Major. Скрипт печатает одну строку. «Готов к мержу» остаётся
-   правдой и не засоряет контекст. Прошлые циклы показали, почему без этого нельзя: ложные
-   утверждения в зелёном коде (2026-10: четыре раунда ревью, восемь Major), опровергнутая причина,
-   дожившая до CHANGELOG (2026-10-30).
-4. **Ревью куска.** В конце куска-контракта (до мержа) и сборки (до включения фичи) Manager
-   запускает независимого ревьюера; для остальных кусков — по желанию пользователя. Воркер
-   двадцать пунктов смотрит на свой код сам — свежий взгляд нужен снаружи.
-5. **Перенос между полосами.** Факт из полосы A, который касается полосы B (изменился контракт,
-   найден общий баг, решение пользователя), Manager передаёт строкой `NOTE <ключ> — <файл>`.
-   Воркеры друг о друге не знают; связывает их только Manager.
+1. **The chunk plan before the first item.** The worker has received a chunk, read the code of its area and writes
+   the chunk plan: items, order, what each changes, which contracts it reads. It sends `PLAN`. The Manager
+   checks it against the big picture — other chunks, contracts, `DR` decisions, acceptance criteria — and answers
+   `GO` or `REDIRECT` with a note. The cheapest course correction is the one made before code is written.
+2. **A line per item.** Every merged or ready item gives one `<note_field>:` line (by default `PLAN-NOTE:`) — what the PR does
+   and what was measured. The Manager reads only that line and notices a mismatch: "the frontend expects a `sentAt` field,
+   but the backend named it `createdAt` in item 4".
+3. **Checking the result with a script.** The "PR ready" line is checked with one command
+   (`lipok.py verify-pr`): not a draft, the report's HEAD is the PR head, CI is green on that SHA, review
+   has no open Blocker/Critical/Major. The script prints one line. "Ready to merge" stays
+   true and does not clutter the context. Past cycles showed why this cannot be skipped: false
+   claims in green code (2026-10: four review rounds, eight Majors), a refuted root cause
+   that survived into the CHANGELOG (2026-10-30).
+4. **Chunk review.** At the end of the contract chunk (before the merge) and of the assembly (before the feature is enabled) the Manager
+   launches an independent reviewer; for the other chunks — at the user's wish. The worker
+   looks at its own code for twenty items — a fresh look has to come from outside.
+5. **Carrying between lanes.** A fact from lane A that concerns lane B (the contract changed,
+   a shared bug was found, a user decision), the Manager passes on as a `NOTE <key> — <file>` line.
+   Workers do not know about each other; only the Manager connects them.
 
-Поправка курса — `REDIRECT <ключ> — <заметка>`: что не так относительно общей картины и как
-надо. Если поправка меняет scope или контракт, это не `REDIRECT`, а решение пользователя
-(v5, раздел 13).
+A course correction is `REDIRECT <key> — <note>`: what is wrong relative to the big picture and how it
+should be. If the correction changes the scope or a contract, it is not a `REDIRECT` but a user decision
+(v5, section 13).
 
-## 3а. Надзор: жив ли воркер и идёт ли работа
+## 3a. Supervision: is the worker alive and is the work moving
 
-Manager не читает, *как* воркер работает, но всегда знает, *что* тот жив, двигается и не врёт
-о результате. Всё это делают скрипты с однострочным итогом; в контекст Manager попадает только
-итог. Молчание воркера — тоже событие: его ловит вахта, а не ожидание Manager.
+The Manager does not read *how* the worker works, but always knows *that* it is alive, moving and not lying
+about the result. All of this is done by scripts with a one-line outcome; only the outcome gets into the Manager's
+context. A worker's silence is also an event: it is caught by a watch, not by the Manager waiting.
 
-### Что ловится и чем
+### What is caught and by what
 
-| Что случилось | Чем замечаем | Ответ Manager |
+| What happened | How we notice | Manager's response |
 |---|---|---|
-| **Ход умер** на ошибке API или модели | вахта `watch-session.sh` за транскриптом воркера → `SESSION ERROR` | `RESUME` «продолжи с отчёта» (новую попытку, если нужна, делает воркер), строка пользователю. Вторая смерть на том же пункте без строки от воркера между ними (`death-turn` = ключ пункта) → смена модели; push |
-| **Лимит использования** | `SESSION LIMIT` | не мёртвый ход: таймер до сброса + 5 минут, один push со временем, потом `RESUME` |
-| **Тишина**: ничего не пишется дольше окна (`quiet_window_min`) | `SESSION QUIET` — считает и транскрипты субагентов, так что исполнитель пункта за работой не даёт ложной тишины | смотрит факты, а не слова: ход идёт; `lane-state` называет живое ожидание — вахту PR (`watch`: CI или мерж) или гейт (`gate-run`, его вывод растёт); воркер ждёт блокировку. Так → перевзвести молча. Иначе → `PING`, ответ одной строкой `ALIVE`; нет ответа за окно → как мёртвый ход |
-| **Молчаливый простой**: ход закончился, а строки наверх нет | `SESSION QUIET`: ход не идёт, `lane-state` не называет ожидания (`watch`, `gate-run` — `none`), пункт не влит и не готов, а строки наверх после последнего `turn` не было | `RESUME` «отчёт и строка наверх»; дважды подряд → строка пользователю: воркер теряет протокол |
-| **Сессия пропала** (закрыта, архивирована, удалена) | `SESSION GONE` или `get_session` → not found | push и карточка: новую сессию можно завести только на ходу пользователя. Новый воркер продолжает с отчёта, ветки и PR; незакоммиченное потеряно — сказать |
-| **Застой без сбоя**: воркер жив, но кусок не двигается | таймер прогресса (`lipok.py stall-check`): от последней строки прогресса (`PLAN`, `READY`, `MERGED`, `CHUNK_DONE` — поле `progress-line`; ответ `ALIVE` прогрессом не считается) прошло больше `progress_window_h` профиля; ожидание мержа READY-PR и решения пользователя — не застой (`STALL IDLE`) | `ALIVE`-запрос; ответ показывает, где стоит. Чинит одно и то же → поправка курса (`REDIRECT`) или решение пользователя |
-| **Петля**: пункт ходит по кругу, попытка растёт | `lipok.py stall-check`: попытка пункта больше `max_attempts` (по умолчанию 3) сверх подтверждённой (`loop-ack`) | `PAUSE` пункта, пользователю — отчёт и что пробовали, push. Пользователь велел продолжать → `loop-ack=<ключ>`, следующая тревога — через `max_attempts` попыток |
-| **Отчёт не совпадает с делом**: «готово», а PR черновик, CI красный, ревью не было | `lipok.py verify-pr` (ниже) | не `READY`; `REDIRECT` с расхождением, по строке на пункт проверки |
-| **Выход за рамки**: PR трогает чужую область, пуш в базовую ветку, force-push, auto-merge | `verify-pr`: файлы PR против области куска; ветка, история, настройка auto-merge | стоп пункта; `REDIRECT` или `BLOCKED`, пользователю |
+| **The turn died** on an API or model error | the `watch-session.sh` watch over the worker's transcript → `SESSION ERROR` | `RESUME` "continue from the report" (a new attempt, if needed, is made by the worker), a line to the user. A second death on the same item with no line from the worker in between (`death-turn` = item key) → switch the model; push |
+| **Usage limit** | `SESSION LIMIT` | not a dead turn: a timer until the reset + 5 minutes, one push with the time, then `RESUME` |
+| **Silence**: nothing is written for longer than the window (`quiet_window_min`) | `SESSION QUIET` — counts subagent transcripts too, so an item executor at work does not cause a false silence | looks at facts, not words: the turn is running; `lane-state` names a live wait — the PR watch (`watch`: CI or merge) or the gate (`gate-run`, its output is growing); the worker is waiting on a lock. If so → re-arm silently. Otherwise → `PING`, answered with one `ALIVE` line; no answer within the window → treat as a dead turn |
+| **Silent idle**: the turn ended, but there is no line upward | `SESSION QUIET`: no turn is running, `lane-state` names no wait (`watch`, `gate-run` — `none`), the item is neither merged nor ready, and there has been no line upward since the last `turn` | `RESUME` "report and a line upward"; twice in a row → a line to the user: the worker is losing the protocol |
+| **The session is gone** (closed, archived, deleted) | `SESSION GONE` or `get_session` → not found | push and a card: a new session can only be started on the user's turn. The new worker continues from the report, the branch and the PR; uncommitted work is lost — say so |
+| **Stall without a failure**: the worker is alive, but the chunk is not moving | the progress timer (`lipok.py stall-check`): more than the profile's `progress_window_h` has passed since the last progress line (`PLAN`, `READY`, `MERGED`, `CHUNK_DONE` — the `progress-line` field; an `ALIVE` answer does not count as progress); waiting for a READY PR to be merged and for a user decision is not a stall (`STALL IDLE`) | an `ALIVE` request; the answer shows where it stands. Fixing the same thing over and over → a course correction (`REDIRECT`) or a user decision |
+| **Loop**: the item goes in circles, the attempt count grows | `lipok.py stall-check`: the item's attempt exceeds `max_attempts` (3 by default) beyond the acknowledged one (`loop-ack`) | `PAUSE` the item, to the user — a report and what was tried, push. The user said to continue → `loop-ack=<key>`, the next alarm — after `max_attempts` attempts |
+| **Report does not match reality**: "done", but the PR is a draft, CI is red, there was no review | `lipok.py verify-pr` (below) | not `READY`; `REDIRECT` with the mismatch, one line per check item |
+| **Out of bounds**: the PR touches someone else's area, a push to the base branch, force-push, auto-merge | `verify-pr`: the PR's files against the chunk area; branch, history, auto-merge setting | stop the item; `REDIRECT` or `BLOCKED`, to the user |
 
-### Что подтверждает `verify-pr` — до слова «готов к мержу»
+### What `verify-pr` confirms — before the words "ready to merge"
 
-Проверяет GitHub и файлы, а не слова отчёта; печатает `VERIFY OK <pr> <sha>` или
-`VERIFY FAIL <pr> <что не так>`.
+It checks GitHub and files, not the words of the report; it prints `VERIFY OK <pr> <sha>` or
+`VERIFY FAIL <pr> <what is wrong>`.
 
-- PR не черновик, база — базовая ветка проекта, HEAD отчёта — голова PR.
-- **CI**: все проверки для этого SHA завершились, ни одна не упала.
-- **Ревью**: отчёт пункта называет раунды холодного ревью и итог последнего — без
-  Blocker/Critical/Major; у PR нет неразрешённых веток ревью; комментарии ботов и CodeQL
-  прочитаны (ответ или исправление на каждый).
-- **Гейт**: отчёт называет файл гейта; его последняя строка `GATE PASS`, и он новее коммита HEAD.
-- **Тесты и диверсии**: отчёт называет число тестов (не ноль) и диверсий, сколько поймано
-  настоящими падениями тестов; код менялся, а диверсий ноль → не готов.
-- **Область**: все файлы PR — в области куска из брифа.
+- The PR is not a draft, the base is the project's base branch, the report's HEAD is the PR head.
+- **CI**: all checks for this SHA have finished, none has failed.
+- **Review**: the item report names the cold review rounds and the outcome of the last one — without
+  Blocker/Critical/Major; the PR has no unresolved review threads; bot and CodeQL comments
+  have been read (an answer or a fix for each).
+- **Gate**: the report names the gate file; its last line is `GATE PASS`, and it is newer than the HEAD commit.
+- **Tests and sabotages**: the report names the number of tests (not zero) and of sabotages, and how many were caught
+  by real test failures; the code changed but there are zero sabotages → not ready.
+- **Area**: all the PR's files are within the chunk area from the brief.
 
-### Вахты Manager
+### Manager watches
 
-На каждого воркера — одна вахта `watch-session.sh` (транскрипт и его субагенты) и один таймер
-прогресса. Вахту PR держит воркер; умер воркер — умерла и его вахта, поэтому при `RESUME` или
-замене Manager первым делом сверяет PR с GitHub (как v5 «Сверка после перезапуска»). После сна
-или перезагрузки все вахты пропадают — «продолжай» перевзводит их.
+Per worker — one `watch-session.sh` watch (the transcript and its subagents) and one progress
+timer. The PR watch is kept by the worker; if the worker dies, its watch dies too, so on `RESUME` or
+replacement the Manager first reconciles the PR with GitHub (as in v5 "Reconciliation after a restart"). After sleep
+or a reboot all watches are gone — "resume" re-arms them.
 
-**Push пользователю** по надзору: сессия пропала; второй мёртвый ход на одном шаге; лимит (с
-временем сброса); петля или `BLOCKED`; кусок стоит, а воркер не отвечает на `ALIVE`.
+**Push to the user** from supervision: the session is gone; a second dead turn on the same step; the limit (with
+the reset time); a loop or `BLOCKED`; the chunk is stuck and the worker does not answer `ALIVE`.
 
-**«статус»** по каждой полосе: жив / ход идёт / простой и с какого времени; последняя строка
-наверх и её время; кусок, пункт, попытка; PR и его CI; что ждёт пользователя.
+**"status"** for each lane: alive / turn running / idle and since when; the last line
+upward and its time; chunk, item, attempt; the PR and its CI; what is waiting on the user.
 
-## 4. Нарезка
+## 4. Cut
 
-Как в v5 (раздел 7), с двумя уточнениями.
+As in v5 (section 7), with two refinements.
 
-- **Режем по областям кода, а не по номерам пунктов.** У каждого куска — своя область файлов;
-  две полосы не правят один файл. Общий шов (API, типы, схема данных) — отдельный маленький
-  кусок-контракт, вливается первым; остальные его только читают.
-- **Кусок — закрытая подзадача**: после его последнего PR база собирается и работает, фича может
-  быть выключена. Размер — от нескольких до ~20 пунктов.
+- **We cut by code areas, not by item numbers.** Each chunk has its own area of files;
+  two lanes do not edit the same file. A shared seam (API, types, data schema) is a separate small
+  contract chunk, merged first; the others only read it.
+- **A chunk is a closed subtask**: after its last PR the base builds and works, the feature may
+  be disabled. Size — from a few to ~20 items.
 
-Нарезку предлагает Manager (с Разведчиком), утверждает пользователь. Это самая ценная работа
-Manager: плохой шов всплывёт на сборке, и никакой воркер его не спасёт.
+The cut is proposed by the Manager (with the scout) and approved by the user. It is the most valuable work of the
+Manager: a bad seam will surface at the assembly, and no worker will save it.
 
-## 5. Цикл воркера по куску
+## 5. The worker's loop over a chunk
 
 ```text
-Воркер получает CHUNK <ключ куска> — <бриф куска>
-   1. читает бриф, область кода, контракты; пишет подплан chunks/<K>/plan.md
-   2. PLAN <ключ куска> — <plan.md>; ждёт GO или REDIRECT
-   3. для каждого пункта подплана:
-        a. бриф пункта -> chunks/<K>/briefs/<slug>-<попытка>.md
-        b. субагент-исполнитель (свежий контекст) по брифу: замер -> правка -> тесты -> диверсии
-           -> холодное ревью -> коммит -> черновой PR -> отчёт пункта
-        c. воркер сам: сверка отчёта с GitHub; гейт (в фоне); вахта PR (wait-pr.sh, в фоне);
-           CI упал по вине изменения -> новый субагент с заметкой (FIX); инфраструктура ->
-           перезапуск один раз
-        d. всё зелёное -> снять черновик -> READY <ключ> — <отчёт> Manager
-        e. MERGED (своя вахта) -> отметка в подплане -> следующий пункт
-           база ушла под открытым PR -> SYNC сам (merge-коммит, без rebase)
-   4. последний пункт влит -> CHUNK_DONE <ключ куска> — <доклад>
+The worker receives CHUNK <chunk key> — <chunk brief>
+   1. reads the brief, the code area, the contracts; writes the chunk plan chunks/<K>/plan.md
+   2. PLAN <chunk key> — <plan.md>; waits for GO or REDIRECT
+   3. for each item of the chunk plan:
+        a. item brief -> chunks/<K>/briefs/<slug>-<attempt>.md
+        b. executor subagent (fresh context) per the brief: measure -> edit -> tests -> sabotages
+           -> cold review -> commit -> draft PR -> item report
+        c. the worker itself: reconciles the report with GitHub; gate (in the background); PR watch (wait-pr.sh, in the background);
+           CI failed because of the change -> a new subagent with a note (FIX); infrastructure ->
+           rerun once
+        d. all green -> remove draft status -> READY <key> — <report> to the Manager
+        e. MERGED (its own watch) -> mark it in the chunk plan -> next item
+           the base moved under an open PR -> SYNC itself (merge commit, no rebase)
+   4. last item merged -> CHUNK_DONE <chunk key> — <summary report>
 ```
 
-- **Один открытый PR на полосу**, пока не замерено, что конвейер окупается (v5, раздел 10,
-  «Конвейер»).
-- **Доклад по куску** (`chunks/<K>/done.md`): что сделано, PR со ссылками, решения, что осталось
-  или найдено вне куска (`P1:`), что изменилось в контрактах. Пользователю Manager пересказывает
-  его в трёх-пяти строках.
-- **Решение** — как в v5: воркер пишет `DECISION` с вариантами, рекомендуемый первым, и ждёт.
-  Субагент решений не принимает: он останавливается и возвращает вопрос воркеру.
+- **One open PR per lane**, until it has been measured that the pipeline pays off (v5, section 10,
+  "Pipeline").
+- **Chunk summary report** (`chunks/<K>/done.md`): what was done, PRs with links, decisions, what remains
+  or was found outside the chunk (`P1:`), what changed in the contracts. The Manager retells it to the user
+  in three to five lines.
+- **Decision** — as in v5: the worker writes `DECISION` with options, the recommended one first, and waits.
+  A subagent does not make decisions: it stops and returns the question to the worker.
 
-## 6. Сообщения
+## 6. Messages
 
-Одна строка `<ТИП> <ключ> — <путь>` по `local_…` id, как в v5 (раздел 12). Ключ пункта —
-`<задача>/<полоса>/<кусок>/<slug>#<попытка>`, ключ куска — `<задача>/<полоса>/<кусок>`.
+One line `<TYPE> <key> — <path>` by `local_…` id, as in v5 (section 12). Item key —
+`<task>/<lane>/<chunk>/<slug>#<attempt>`, chunk key — `<task>/<lane>/<chunk>`.
 
-| От → Кому | Тип | Что значит |
+| From → To | Type | Meaning |
 |---|---|---|
-| Manager → воркер | `CHUNK` | новый кусок; путь брифа куска |
-| | `GO` / `REDIRECT` | подплан принят / поправка курса с заметкой |
-| | `NOTE` | факт из другой полосы или от пользователя; путь заметки |
-| | `DECISION` | решение пользователя; путь `DR` |
-| | `SYNC` | база ушла под открытым PR, файлы пересекаются с чужим мержем |
-| | `PING` | надзор: ответь одной строкой `ALIVE` |
-| | `PAUSE`, `RESUME`, `STOP` | как в v5 |
-| Воркер → Manager | `LANE` | первый ход: папка транскрипта |
-| | `PLAN` | подплан куска на утверждение |
-| | `READY` | PR пункта вышел из черновика, собственный `verify-pr` воркера — OK; путь отчёта |
-| | `MERGED` | своя вахта воркера увидела мерж; путь отчёта |
-| | `DECISION`, `BLOCKED` | нужен пользователь; путь отчёта |
-| | `PAUSED` | остановился по `PAUSE` |
-| | `CHUNK_DONE` | кусок закрыт; путь доклада |
-| | `ALIVE` | ответ на `PING`: одна строка, что идёт и где его вывод |
-| Воркер ↔ исполнитель | — | исполнитель — субагент: бриф на входе, ответ `ITEM DONE / COMMITTED / DECISION / BLOCKED` на выходе |
+| Manager → worker | `CHUNK` | a new chunk; path of the chunk brief |
+| | `GO` / `REDIRECT` | chunk plan accepted / course correction with a note |
+| | `NOTE` | a fact from another lane or from the user; path of the note |
+| | `DECISION` | a user decision; `DR` path |
+| | `SYNC` | the base moved under an open PR, files overlap with someone else's merge |
+| | `PING` | supervision: answer with one `ALIVE` line |
+| | `PAUSE`, `RESUME`, `STOP` | as in v5 |
+| Worker → Manager | `LANE` | first turn: the transcript folder |
+| | `PLAN` | the chunk plan for approval |
+| | `READY` | the item's PR is out of draft, the worker's own `verify-pr` is OK; path of the report |
+| | `MERGED` | the worker's own watch saw the merge; path of the report |
+| | `DECISION`, `BLOCKED` | the user is needed; path of the report |
+| | `PAUSED` | stopped on `PAUSE` |
+| | `CHUNK_DONE` | the chunk is closed; path of the summary report |
+| | `ALIVE` | answer to `PING`: one line, what is running and where its output is |
+| Worker ↔ executor | — | the executor is a subagent: a brief on input, an `ITEM DONE / COMMITTED / DECISION / BLOCKED` answer on output |
 
-Чего наверх **нет**: `WORKING` на каждый ход, CI-события, `FIX`, `SYNC`, перезапуски — это
-внутреннее дело воркера. Каждое событие наверх — явной строкой (v5 §4, строка 3c).
+What does **not** go upward: `WORKING` on every turn, CI events, `FIX`, `SYNC`, reruns — these are the
+worker's internal business. Every event upward is an explicit line (v5 §4, row 3c).
 
-## 7. Состояние
+## 7. State
 
-Как в v5 (раздел 16) с поправками шага 1 (`lipok.py`, `task.json`). Писатели:
+As in v5 (section 16) with the step 1 amendments (`lipok.py`, `task.json`). Writers:
 
-| Файл | Писатель |
+| File | Writer |
 |---|---|
-| `task.json`, общий план, `decisions/DR-NNN.md`, `chunks/<K>/brief.md`, `reviews/` | Manager |
-| `lanes/<N>/state.md` — уровень куска: воркер, кусок, статус куска, открытый PR, пауза | Manager |
-| `chunks/<K>/plan.md`, `briefs/`, `done.md`, `chunks/<K>/lane-state.md` — уровень пункта: ключ, попытка, вахты, `last-turn`, `booked`, `rerun` | воркер |
-| `chunks/<K>/reports/<slug>.md` | субагент-исполнитель (через воркера) |
+| `task.json`, the overall plan, `decisions/DR-NNN.md`, `chunks/<K>/brief.md`, `reviews/` | Manager |
+| `lanes/<N>/state.md` — chunk level: worker, chunk, chunk status, open PR, pause | Manager |
+| `chunks/<K>/plan.md`, `briefs/`, `done.md`, `chunks/<K>/lane-state.md` — item level: key, attempt, watches, `last-turn`, `booked`, `rerun` | worker |
+| `chunks/<K>/reports/<slug>.md` | executor subagent (via the worker) |
 
-Состояние пункта переезжает из файла Manager в файл воркера: это и есть «не следить за шагами».
+Item state moves from the Manager's file to the worker's file: this is exactly "not following the steps".
 
-## 8. Контекст Manager — что он читает
+## 8. The Manager's context — what it reads
 
-| Читает | Не читает |
+| Reads | Does not read |
 |---|---|
-| бриф и доклад куска; подплан (один раз); строку `<note_field>:` пункта; одну строку `verify-pr`; итоговые строки вахт и `stall-check`; вопросы `DECISION`; вердикт ревьюера куска | диффы; логи CI; отчёт пункта целиком (только при `DECISION`/`BLOCKED` или если строка вызвала сомнение); транскрипты воркеров |
+| the chunk brief and summary report; the chunk plan (once); the item's `<note_field>:` line; one `verify-pr` line; the outcome lines of watches and `stall-check`; `DECISION` questions; the chunk reviewer's verdict | diffs; CI logs; the full item report (only on `DECISION`/`BLOCKED` or if the line raised a doubt); worker transcripts |
 
-Бюджет: задача из 120 пунктов в 6 кусках — около 6 подпланов, 6 докладов и 120 строк. Manager
-доживает до конца без сжатия или переживает его без потерь: каждое событие начинается с чтения
-`task.json` и `lanes/*/state.md` (v5, правило 17).
+Budget: a task of 120 items in 6 chunks — about 6 chunk plans, 6 summary reports and 120 lines. The Manager
+survives to the end without context compaction or survives it without losses: every event starts by reading
+`task.json` and `lanes/*/state.md` (v5, rule 17).
 
-## 9. Узкое место — мержи
+## 9. The bottleneck — merges
 
-Две полосы с PR на пункт дают поток мержей; темп задачи задаёт пользователь.
+Two lanes with a PR per item produce a stream of merges; the task's pace is set by the user.
 
-- Manager шлёт готовые PR **пакетом**, в порядке: зависимости, потом PR с пересекающимися
-  файлами подряд.
-- Воркер может собрать два-три мелких связанных пункта в один PR, если подплан так и
-  утверждён (`GO`).
-- `max_ready_prs` профиля: дошли до предела — воркеры доводят текущий пункт до READY и ждут.
+- The Manager sends ready PRs **in a batch**, in order: dependencies first, then PRs with overlapping
+  files back to back.
+- A worker may bundle two or three small related items into one PR, if the chunk plan was
+  approved that way (`GO`).
+- The profile's `max_ready_prs`: once the limit is reached, workers bring the current item to READY and wait.
 
-## 10. Непроверенные допущения — пробы до постройки
+## 10. Unverified assumptions — probes before building
 
-| # | Допущение | Как проверить | Если не так |
+| # | Assumption | How to check | If not so |
 |---|---|---|---|
-| P1 | Субагент воркера проводит пункт целиком: правка, тесты, коммит, `gh pr create` | один пункт пилота | **проверено 2026-11-11 (частичный пилот): да** — исполнитель провёл настоящий пункт (девять находок) до чернового PR сам: 51 минута, два раунда ревью, 153 теста, 26 диверсий из 26 |
-| P2 | Субагент может запустить своего субагента (холодное ревью) | **проверено 2026-11-11: да** — субагент вызвал `Agent`, получил ответ; его фоновый `Bash` тоже вернул результат | — |
-| P3 | Длинный прогон (гейт, ожидание CI) ждёт воркер своей вахтой, а не субагент | пилот: гейт дольше 10 минут | — (так и задумано; проверяется, что воркер просыпается от вахты) |
-| P4 | Контекст воркера выдерживает кусок из ~20 пунктов: отчёты, события PR, сжатие | пилот, метрика: размер транскрипта на пункт, качество после сжатия | кусок меньше; или воркер-на-кусок: новый воркер на каждый кусок (на ходу пользователя) |
-| P5 | Очистка воркера между кусками | пробы очистки сессии, если понадобится | новый воркер на кусок |
+| P1 | The worker's subagent carries an item through entirely: edit, tests, commit, `gh pr create` | one pilot item | **verified 2026-11-11 (partial pilot): yes** — the executor carried a real item (nine findings) to a draft PR on its own: 51 minutes, two review rounds, 153 tests, 26 of 26 sabotages |
+| P2 | A subagent can launch its own subagent (cold review) | **verified 2026-11-11: yes** — the subagent called `Agent` and got an answer; its background `Bash` also returned a result | — |
+| P3 | A long run (gate, waiting for CI) is awaited by the worker with its watch, not by the subagent | pilot: a gate longer than 10 minutes | — (that is the design; what is checked is that the worker wakes up from the watch) |
+| P4 | The worker's context holds a chunk of ~20 items: reports, PR events, compaction | pilot, metric: transcript size per item, quality after compaction | a smaller chunk; or worker-per-chunk: a new worker for each chunk (on the user's turn) |
+| P5 | Clearing the worker between chunks | session-clearing probes, if needed | a new worker per chunk |
 
-## 11. План внедрения
+## 11. Rollout plan
 
-**Реализация шага A (2026-11-11):** скилл `lipok` переписан под v6 — `references/item.md`
-(исполнитель), `worker.md` (воркер ведёт кусок), `lane.md` и `manager.md` (сторона Manager, надзор),
-`lipok.py` (`chunk`, состояние пункта у воркера в `chunks/<K>/lane-state.md`, `verify-pr`,
-`stall-check`; 47 тестов; холодное ревью согласованности — 11 находок исправлены).
+**Implementation of step A (2026-11-11):** the `lipok` skill was rewritten for v6 — `references/item.md`
+(executor), `worker.md` (the worker leads the chunk), `lane.md` and `manager.md` (the Manager side, supervision),
+`lipok.py` (`chunk`, item state kept by the worker in `chunks/<K>/lane-state.md`, `verify-pr`,
+`stall-check`; 47 tests; a cold consistency review — 11 findings fixed).
 
-**Частичный пилот (2026-11-11).** Роли Manager и воркера играла одна сессия (ход пришёл с телефона, а с такого хода сессии не заводятся), а настоящий пункт выполнил исполнитель-субагент в отдельном worktree. Итог: PR, гейт `GATE PASS`, CI зелёный, `verify-pr` OK у воркера и у Manager. Проверено: P1, P2, формат отчёта, `verify-pr` на настоящем PR, путь READY. Найдено и исправлено: строка заметки не того вида (бриф не называл `note_field`) — теперь бриф несёт `NOTE FIELD:`, а `verify-pr` требует эту строку; ревьюер оставил служебную папку в дереве — правило в `item.md`; heredoc со слэшами и кавычками ломается в Bash — правило в `SKILL.md`. Не проверено: отдельные сессии, вахты и надзор, пробуждения, контекст воркера на куске (P3, P4) — это полный пилот.
+**Partial pilot (2026-11-11).** The Manager and worker roles were played by one session (the turn came from the phone, and sessions cannot be started from such a turn), while a real item was carried out by an executor subagent in a separate worktree. Outcome: a PR, gate `GATE PASS`, CI green, `verify-pr` OK for both the worker and the Manager. Verified: P1, P2, the report format, `verify-pr` on a real PR, the READY path. Found and fixed: a note line of the wrong form (the brief did not name `note_field`) — now the brief carries `NOTE FIELD:`, and `verify-pr` requires that line; the reviewer left a service folder in the tree — a rule in `item.md`; a heredoc with slashes and quotes breaks in Bash — a rule in `SKILL.md`. Not verified: separate sessions, watches and supervision, wake-ups, the worker's context over a chunk (P3, P4) — that is the full pilot.
 
-**Полный пилот (2026-11-12).** Один кусок настоящего проекта (пять пунктов и дефект, найденный пользователем на проде во время куска): отдельная сессия воркера в своём worktree, исполнители в фоне, 6 PR, все влиты человеком; задача закрыта с `final.md`. Проверено: строки в обе стороны, `GO`/`READY`/`MERGED`/`DECISION`/`BLOCKED`/`NOTE`/`CHUNK_DONE`, два решения через DR, дефект с прода как `NOTE` → новый пункт, Manager не читал ни диффов, ни логов CI. Находки и исправления (2026-11-13): (1) `stall-check` считал плановые партии петлёй — теперь `item --attempts N` и строка плана `· attempts: N`; (2) `verify-pr` не знал обязательных проверок — поле профиля `required_checks`; (3) `wait-pr.sh` давал `CI-GREEN`, пока проверка деплоя не появилась, — теперь ждёт обязательные и говорит `CI-MISSING`; (4) `watch-session.sh` при перевзводе срабатывал сразу — тишина считается от взвода; (5) сессии не заводятся с хода, пришедшего с телефона (Remote Control ни при чём); (6) Manager забыл отметку `progress-line` на `MERGED` → ложный `STALL QUIET` — отметки ставит `lipok.py line`, бронь — `lipok.py book`, READY — `verify-pr --lane`; (7) время ожидания мержей не писалось — поля `merge-wait-min`, `decision-wait-min` в состоянии полосы. Накладные расходы пилота (`lipok.py usage` по транскриптам, относительная стоимость): Manager 8%, ход воркера 7%, исполнители и ревью 85% — координация ≈15%; `final.md` каждой задачи пишет эту раскладку.
+**Full pilot (2026-11-12).** One chunk of a real project (five items and a defect the user found in production during the chunk): a separate worker session in its own worktree, executors in the background, 6 PRs, all merged by a human; the task was closed with `final.md`. Verified: lines in both directions, `GO`/`READY`/`MERGED`/`DECISION`/`BLOCKED`/`NOTE`/`CHUNK_DONE`, two decisions via DR, the production defect as a `NOTE` → a new item, the Manager read neither diffs nor CI logs. Findings and fixes (2026-11-13): (1) `stall-check` counted planned batches as a loop — now `item --attempts N` and the plan line `· attempts: N`; (2) `verify-pr` did not know about required checks — the profile field `required_checks`; (3) `wait-pr.sh` reported `CI-GREEN` before the deploy check had appeared — now it waits for the required ones and says `CI-MISSING`; (4) `watch-session.sh` fired immediately on re-arming — silence is now counted from arming; (5) sessions cannot be started from a turn that came from the phone (Remote Control has nothing to do with it); (6) the Manager forgot the `progress-line` mark on `MERGED` → a false `STALL QUIET` — marks are set by `lipok.py line`, booking by `lipok.py book`, READY by `verify-pr --lane`; (7) merge wait time was not recorded — the fields `merge-wait-min`, `decision-wait-min` in the lane state. Pilot overhead (`lipok.py usage` over the transcripts, relative cost): Manager 8%, the worker's own turns 7%, executors and review 85% — coordination ≈15%; every task's `final.md` records this breakdown.
 
-**Шаг A — пилот на одной полосе.** Оставшиеся пункты настоящей задачи — один кусок; воркер ведёт
-их сам через субагентов по разделу 5; Manager — по разделам 3 и 8. Нужно: роль воркера-ведущего
-(`references/worker.md` → цикл куска + `references/item.md` для исполнителя), `lipok.py verify-pr`
-и `lipok.py stall-check`, поля профиля `progress_window_h` и `max_attempts`, надзор раздела 3а,
-сообщения раздела 6, `lanes/state.md` уровня куска.
-**Готово:** кусок закрыт; Manager за весь кусок не прочитал ни одного лога CI и диффа; хотя бы одна
-поправка курса или проверка `verify-pr` сработала по делу; каждый сбой воркера за пилот (мёртвый
-ход, тишина, лимит — что случится) был замечен надзором, а не пользователем; P1–P4 получили ответ.
+**Step A — a pilot on one lane.** The remaining items of a real task form one chunk; the worker leads
+them itself via subagents per section 5; the Manager acts per sections 3 and 8. Needed: the worker-lead role
+(`references/worker.md` → the chunk loop + `references/item.md` for the executor), `lipok.py verify-pr`
+and `lipok.py stall-check`, the profile fields `progress_window_h` and `max_attempts`, the supervision of section 3a,
+the messages of section 6, a chunk-level `lanes/state.md`.
+**Done when:** the chunk is closed; over the whole chunk the Manager read not a single CI log or diff; at least one
+course correction or `verify-pr` check fired for a real reason; every worker failure during the pilot (dead
+turn, silence, limit — whatever happens) was noticed by supervision, not by the user; P1–P4 got an answer.
 
-**Шаг B, нарезка — написано 2026-11-14:** `references/decomposition.md` (разведчик, швы и контракты, куски `contract`/`foundation`/`impl`/`assembly`, у горячих файлов один владелец, файл нарезки с `AREA`/`AFTER`, раздача по волнам) и `lipok.py cut-check` — механически проверяет, что куски одной волны не делят ни одного файла (по `git ls-files` и по глобам), что `AFTER` без циклов и пункт в одном куске; печатает `CUT OK lanes=<n>` (ширина самой широкой волны, не больше `max_lanes`). Запрет «пока одна полоса» снят в `manager.md` и `/lipok-task`. Вживую ещё не проверено.
+**Step B, the cut — written 2026-11-14:** `references/decomposition.md` (the scout, seams and contracts, chunks `contract`/`foundation`/`impl`/`assembly`, hot files have a single owner, a cut file with `AREA`/`AFTER`, handing out by waves) and `lipok.py cut-check` — mechanically checks that chunks of one wave share no file (via `git ls-files` and via globs), that `AFTER` has no cycles and that an item is in one chunk; prints `CUT OK lanes=<n>` (the width of the widest wave, no more than `max_lanes`). The "one lane for now" ban was lifted in `manager.md` and `/lipok-task`. Not yet verified live.
 
-**Шаг B — две полосы.** Настоящая пара «контракт + две стороны» (например, бэкенд и фронтенд одной
-фичи): `references/decomposition.md`, Разведчик, `lane_env` на полосу, очередь мержей пакетами,
-`NOTE` между полосами, ревью куска-контракта и сборки.
-**Готово:** контракт влит первым; две полосы параллельно закрыли свои куски; сборка связала их,
-фича включена; три метрики v5 (раздел 22) в `final.md`.
+**Step B — two lanes.** A real "contract + two sides" pair (for example, the backend and frontend of one
+feature): `references/decomposition.md`, the scout, `lane_env` per lane, the merge queue in batches,
+`NOTE` between lanes, review of the contract chunk and of the assembly.
+**Done when:** the contract was merged first; two lanes closed their chunks in parallel; the assembly wired them together,
+the feature is enabled; the three v5 metrics (section 22) are in `final.md`.
 
-**Шаг C — настройка по метрикам:** размер куска, число полос (до трёх), группировка PR.
+**Step C — tuning by metrics:** chunk size, number of lanes (up to three), PR grouping.
 
-## 12. Отложено
+## 12. Deferred
 
-- **Трёхуровневая схема (v5, разделы 3, 9, 10, 27).** Вернуться, только если на шаге B
-  Manager не удерживает три полосы даже с отчётами по кускам. Тогда же выбрать между фразой
-  «старт» и вариантом «б».
-- **Конвейер внутри полосы (v5, раздел 10).** Вернуться, если на шаге B полосы заметно ждут мержей.
-- **Мод «Иерархия» (v5, раздел 25)** — после шага B; в плоской схеме это список полос и кусков.
+- **The three-level scheme (v5, sections 3, 9, 10, 27).** Return to it only if at step B
+  the Manager cannot hold three lanes even with per-chunk reports. At that point also choose between the
+  "start" phrase and option "b".
+- **A pipeline inside a lane (v5, section 10).** Return to it if at step B lanes noticeably wait for merges.
+- **The "Hierarchy" mod (v5, section 25)** — after step B; in the flat scheme it is a list of lanes and chunks.
 
-## 13. Открытые вопросы
+## 13. Open questions
 
-- Сколько пунктов в куске выдерживает воркер (P4) — от этого зависит, нужен ли новый воркер на
-  каждый кусок.
-- Нужен ли `REDIRECT` в середине пункта (сейчас — только между пунктами и на подплане).
-- Подтвердить или отклонить автономию Manager (v5, раздел 13): в v6 она важнее, потому что
-  Manager чаще правит курс.
+- How many items in a chunk a worker can hold (P4) — this determines whether a new worker is needed for
+  each chunk.
+- Whether a `REDIRECT` is needed in the middle of an item (currently — only between items and on the chunk plan).
+- Confirm or reject the Manager's autonomy (v5, section 13): in v6 it matters more, because
+  the Manager corrects the course more often.

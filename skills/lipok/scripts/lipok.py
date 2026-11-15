@@ -1051,7 +1051,7 @@ CHUNK_KINDS = ("contract", "foundation", "impl", "assembly")
 
 
 def parse_cut(path):
-    """The cut file (references/decomposition.md, «The cut file»): one `## K<n> <kind> — <title>`
+    """The cut file (references/decomposition.md, "The cut file"): one `## K<n> <kind> — <title>`
     block per chunk with `AREA:`, `AFTER:`, `ITEMS:` and `RESOURCES:` lines."""
     chunks, cur, bad = {}, None, []
     for no, line in enumerate(read_text(path).splitlines(), 1):
