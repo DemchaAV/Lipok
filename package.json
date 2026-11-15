@@ -1,0 +1,29 @@
+{
+  "name": "lipok",
+  "version": "1.0.0",
+  "description": "Multi-agent dev harness for Claude Code: one manager, parallel workers in their own worktrees, PRs you merge.",
+  "private": true,
+  "license": "UNLICENSED",
+  "bin": {
+    "lipok": "bin/lipok.js"
+  },
+  "files": [
+    "bin/",
+    "skills/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DemchaAV/Lipok.git"
+  },
+  "keywords": [
+    "claude-code",
+    "multi-agent",
+    "ai-agents",
+    "agent-orchestration",
+    "git-worktree"
+  ]
+}

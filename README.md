@@ -66,15 +66,29 @@ base branch; commits carry the project's author, with no assistant attribution.
 - The Claude Code desktop app (the Manager starts worker sessions and messages them).
 - `git`, the GitHub CLI `gh` (signed in), Python 3.10+, and a bash. Developed on Windows with Git
   Bash; macOS and Linux are untested.
+- Node.js 18+ for the installer.
 
 ## Install
 
 ```bash
-bash install.sh
+npx github:DemchaAV/Lipok install
 ```
 
-It copies `skills/lipok` and `skills/lipok-task` into `~/.claude/skills` (replacing any earlier
-copy of those two folders only). Run it again after pulling changes.
+It checks git, gh (and that it is signed in), Python and bash, then copies `skills/lipok` and
+`skills/lipok-task` into `~/.claude/skills`, replacing only those two folders. Run the same command
+again to update. The repository is private: npm fetches it with your git credentials — if it
+cannot, run `gh auth setup-git` once.
+
+```bash
+npx github:DemchaAV/Lipok doctor
+```
+
+```bash
+npx github:DemchaAV/Lipok uninstall
+```
+
+`doctor` only checks; `uninstall` removes the two skill folders and keeps task state in `~/.lipok`.
+From a clone, `bash install.sh` copies the skills without Node.
 
 ## Use
 
@@ -108,6 +122,7 @@ skills/lipok/              the core: SKILL.md, references per role, scripts
   scripts/lipok.py         state, keys, verify-pr, stall-check, cut-check, usage, locks
   scripts/wait-pr.sh       the PR and CI watch
   scripts/watch-session.sh the worker liveness watch
+bin/lipok.js               the installer (npx … install / doctor / uninstall)
 skills/lipok-task/         the /lipok-task command
 tests/run.sh               the script tests: bash tests/run.sh skills/lipok/scripts/lipok.py <tmp dir>
 docs/architecture.md       the design (v6, in Russian)
