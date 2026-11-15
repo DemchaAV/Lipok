@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 — 2026-11-15
+
+First release: the `lipok` and `lipok-task` skills (Manager, worker, executor roles; cutting a task
+into parallel chunks), `lipok.py` (state, `verify-pr`, `stall-check`, `cut-check`, `usage`, locks),
+`wait-pr.sh`, `watch-session.sh`, and the `npx github:DemchaAV/Lipok install` installer.
+
+Changes made while preparing the release:
 
 ### Added
 - MIT license.
@@ -31,9 +37,3 @@
 - Reports to the user are in the user's language; `max_lanes` defaults to 1 and says so.
 - Shorter instructions without duplicated rules; standalone `docs/architecture.md`, the old design
   notes moved to `docs/design-history.md`; CI on Ubuntu and Windows.
-
-## 1.0.0 — 2026-11-15
-
-First release: the `lipok` and `lipok-task` skills (Manager, worker, executor roles; cutting a task
-into parallel chunks), `lipok.py` (state, `verify-pr`, `stall-check`, `cut-check`, `usage`, locks),
-`wait-pr.sh`, `watch-session.sh`, and the `npx github:DemchaAV/Lipok install` installer.
