@@ -1,4 +1,4 @@
-# Lipok
+# Lipok 🍃
 
 ![Lipok — Manager, workers in their own worktrees, executors per item, PRs verified and merged by a human](assets/banner.png)
 
