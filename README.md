@@ -1,5 +1,7 @@
 # Lipok
 
+![Lipok — Manager, workers in their own worktrees, executors per item, PRs verified and merged by a human](assets/banner.png)
+
 A multi-agent development harness for Claude Code. You give it a task or a plan; a **Manager**
 session cuts it into chunks that never touch the same files, starts **worker** sessions that each
 build one chunk in their own git worktree, and brings you only what needs a human: the cut to
@@ -113,7 +115,7 @@ docs/architecture.md       the design (v6, in Russian)
 
 ## Status
 
-v6. A full single-lane pilot ran on a real project: one chunk, six pull requests, all merged by
+First release (internal design generation v6). A full single-lane pilot ran on a real project: one chunk, six pull requests, all merged by
 hand, decisions relayed, a production defect turned into a new item before the chunk closed. On
 that pilot coordination (Manager plus the worker's own turns) took about 15% of the tokens, the
 executors 85%. The multi-lane cut (`decomposition.md`, `cut-check`) is implemented and tested but
