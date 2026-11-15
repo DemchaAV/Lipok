@@ -59,8 +59,7 @@ and what each changes), or from your own reading of a plan or a line that needs 
 4. The answer picks among options inside the chunk's scope → `DECISION <key> — <DR path>`, the
    user's words quoted in the DR: "<user>: "…"". It changes the scope or the cut → a new chunk
    brief (or a `REDIRECT` with a note naming the DR) and, if other lanes are touched, a `NOTE` to
-   each. Either way: `set chunk-status=WORKING`, `$A line $L ANSWERED` (closes the decision
-   wait), record the decision and its date in the plan.
+   each. Either way: `set chunk-status=WORKING`, `$A line $L ANSWERED` (closes the decision wait), re-arm the stall watch (it stopped at `STALL IDLE`), record the decision and its date in the plan.
 
 Not the worker's and not yours: a refuted premise, two non-equivalent solutions, widening or
 splitting an item or a chunk, the shape of a public API, a contract change, a plan rule the
@@ -97,11 +96,11 @@ Read the state and answer in a few lines, one per lane, then what waits on the u
 - lane `N`: alive / turn running / idle since <time> (`get_session`, the lane-state's `turn`);
   the last line from the worker and its time; chunk, item, attempt; PR and `pr-status`;
 - waiting on the user: READY PRs in queue order, open decisions;
-- the plan's position (`python ~/.claude/skills/plan-status/plan_status.py <plan>`).
+- the plan's position, if the optional `plan-status` skill is installed (`$(command -v python || command -v python3) ~/.claude/skills/plan-status/plan_status.py <plan>`); otherwise count the plan's `[x]` and `[ ]` lines.
 
 ## Pause, resume, stop
 
-- **"pause"** — for each lane: `PAUSE <chunk key>`; stop both watches (`lane.md`, "Stopping a
+- **"pause"** — for each lane: `PAUSE <ck>`; stop both watches (`lane.md`, "Stopping a
   watch") once `PAUSED` comes; `set paused=yes`. A merge that lands while paused is booked on
   "resume".
 - **"resume" — Resume.** Also the answer after a restart or sleep, when every watch is gone:

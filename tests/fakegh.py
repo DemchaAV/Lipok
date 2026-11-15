@@ -13,12 +13,18 @@ elif a[:2] == ["pr", "view"]:
     print(json.dumps({
         "state": "OPEN", "isDraft": case == "draft", "headRefOid": head,
         "baseRefName": "main", "autoMergeRequest": None,
-        "files": [{"path": "src/app.js"}, {"path": "docs/x.md"}] + ([{"path": "other/y.js"}] if case == "outside" else []),
+        "mergeable": {"conflict": "CONFLICTING", "unknown": "UNKNOWN"}.get(case, "MERGEABLE"),
+        "reviewDecision": "CHANGES_REQUESTED" if case == "changes" else "",
+        "files": ([{"path": f"src/f{i}.js"} for i in range(100)] if case == "manyfiles" else
+                  [{"path": "SRC/App.js" if case == "upper" else "src/app.js"}, {"path": "docs/x.md"}]
+                  + ([{"path": "other/y.js"}] if case == "outside" else [])),
         "commits": [{"committedDate": "2026-01-01T00:00:00Z"}],
     }))
 elif a[:2] == ["pr", "checks"]:
     if case == "nochecks":
         print("[]")
+    elif case == "nochecks-real":     # what the real gh does for a PR with no checks
+        print("no checks reported on the 'x' branch", file=sys.stderr); sys.exit(1)
     else:
         print(json.dumps([{"name": "build", "bucket": "fail" if case == "cifail" else "pass"},
                           {"name": "lint", "bucket": "pending" if case == "pending" else "pass"}]))

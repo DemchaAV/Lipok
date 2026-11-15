@@ -84,13 +84,14 @@ Commands (each prints its result; the last line is the one to read):
                                                is task.json created..closed (or now); workers are
                                                every lane's worker-dir and earlier workers of the
                                                lane; the Manager counts only with --manager
-  lock acquire <resource> --holder H           take a machine-wide lock (exit 4 if another holds it;
+  lock acquire <resource> --holder H --repo R  take a machine-wide lock (exit 4 if another holds it;
                                                the same holder, any attempt, gets it again)
-  lock release <resource> --holder H           release it (exit 4 if another holder has it)
+  lock release <resource> --holder H --repo R  release it (exit 4 if another holder has it)
   lock show [<resource>]                       who holds what, since when
   lock break <resource> --by H                 remove a dead holder's lock (the Manager only)
 
-A holder is compared without its `#<attempt>`: t1/L1/K1/x#1 and t1/L1/K1/x#2 are the same holder.
+A holder is <repo>:<key>, compared without its `#<attempt>`: o/r:t1/L1/K1/x#1 and o/r:t1/L1/K1/x#2
+are the same holder; o/r:t1/L1/K1/x and o/q:t1/L1/K1/x are not.
 item/bump/set/task-set/task-close serialise on a lock file beside the file they change.
 
 Exit codes: 0 done, 1 a file could not be read or written, 2 usage, 3 not found, 4 refused.
@@ -107,7 +108,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 
 HOME = pathlib.Path(os.environ.get("LIPOK_HOME", pathlib.Path.home() / ".lipok"))
 
@@ -163,10 +164,17 @@ def show_path(p):
 
 
 def read_text(path):
-    try:
-        return pathlib.Path(path).read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError as e:
-        raise Broken(f"ERROR {show_path(path)} is not UTF-8: {e}")
+    # Windows refuses a read for an instant while another process replaces the file
+    # (write_atomic's os.replace): about 1% of reads under 8 concurrent writers (2026-11-15).
+    for i in range(100):
+        try:
+            return pathlib.Path(path).read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError as e:
+            raise Broken(f"ERROR {show_path(path)} is not UTF-8: {e}")
+        except PermissionError:
+            if i == 99:
+                raise
+            time.sleep(0.05)
 
 
 def read_json(path):
@@ -209,12 +217,13 @@ def file_lock(path, timeout=30):
             os.write(fd, f"{os.getpid()} {now()}\n".encode())
             os.close(fd)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):
+            # PermissionError: Windows, while another process is deleting the lock file.
             try:
                 if time.time() - lock.stat().st_mtime > 120:   # left by a killed process
                     lock.unlink()
                     continue
-            except FileNotFoundError:
+            except (FileNotFoundError, PermissionError):
                 continue
             if time.time() > end:
                 raise Refused(f"REFUSED {show_path(path)} is locked by another writer ({show_path(lock)})")
@@ -222,10 +231,14 @@ def file_lock(path, timeout=30):
     try:
         yield
     finally:
-        try:
-            lock.unlink()
-        except FileNotFoundError:
-            pass
+        for i in range(100):
+            try:
+                lock.unlink()
+                break
+            except FileNotFoundError:
+                break
+            except PermissionError:
+                time.sleep(0.05)
 
 
 def project_dir(repo):
@@ -522,9 +535,14 @@ def cmd_get(args):
 
 
 def cmd_set(args):
+    # Every pair after --expect is a condition (2026-11-15: `--expect a=1 b=2` used to SET b=2).
     expect = []
-    while "--expect" in args:
-        expect.append(opt(args, "--expect"))
+    if "--expect" in args:
+        i = args.index("--expect")
+        expect = [a for a in args[i + 1:] if a != "--expect"]
+        args = args[:i]
+        if not expect:
+            raise Usage("--expect needs key=value")
     if len(args) < 2:
         raise Usage("set <state.md> key=value ... [--expect key=value ...]")
     path, pairs = args[0], parse_pairs(args[1:])
@@ -703,9 +721,16 @@ def cmd_book(args):
     if is_item_state(path):
         raise Usage("book works on the Manager's lanes/<N>/state.md")
     project_dir(repo)
-    if read_fields(path).get("booked") == pr:
+    # `booked` lists every PR booked on the lane, so an old line cannot book one twice; a lane
+    # holding another PR refuses (2026-11-15 audit: `book 7` wiped PR #9's READY).
+    def booked(f):
+        return [b for b in f.get("booked", "none").split(",") if b not in ("", "none")]
+    f0 = read_fields(path)
+    if pr in booked(f0):
         print(f"ALREADY BOOKED {pr}")
         return
+    if f0.get("pr", "none") not in ("", "none", pr):
+        raise Refused(f"REFUSED the lane holds PR #{f0['pr']} ({f0.get('pr-status')}), not #{pr}")
     v = gh_json(["pr", "view", pr, "--repo", repo, "--json", "state,mergedAt,mergeCommit"])
     if v.get("state") != "MERGED" or not v.get("mergedAt"):
         raise Refused(f"NOT MERGED {pr} {v.get('state')}")
@@ -713,7 +738,7 @@ def cmd_book(args):
     merged = parse_time(v["mergedAt"])
     with file_lock(path):
         f = read_fields(path)
-        if f.get("booked") == pr:
+        if pr in booked(f):
             print(f"ALREADY BOOKED {pr}")
             return
         wait = ""
@@ -722,7 +747,8 @@ def cmd_book(args):
             add_minutes(f, "merge-wait-min", n)
             f["wait-since"], f["wait-kind"] = "none", "none"
             wait = f" waited {n}m"
-        f["booked"], f["pr"], f["pr-status"] = pr, "none", "none"
+        f["booked"] = ",".join(booked(f) + [pr])
+        f["pr"], f["pr-status"] = "none", "none"
         write_fields(path, f)
     print(f"BOOKED {pr} {sha} {merged:%Y-%m-%d}{wait}")
 
@@ -738,12 +764,18 @@ def gh_json(args):
     try:
         return json.loads(p.stdout)
     except ValueError:
+        # A PR with no check at all: `gh pr checks` prints this and no JSON (exit 1).
+        if args[:2] == ["pr", "checks"] and "no checks reported" in (p.stderr + p.stdout):
+            return []
         msg = (p.stderr or p.stdout).strip().replace("\n", " ")[:300]
         raise Broken(f"ERROR gh {' '.join(args[:2])} failed (exit {p.returncode}): {msg}")
 
 
 def parse_time(s):
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    """An ISO time; one without a zone is UTC (a hand-typed stamp used to crash the comparison
+    with an aware one). Anything else raises ValueError."""
+    t = datetime.fromisoformat(str(s).strip().replace("Z", "+00:00"))
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
 THREADS_QUERY = ("query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name)"
@@ -841,7 +873,8 @@ def verify_pr(pr, repo, report, area):
     _, prof = load_profile(repo)
     base = prof.get("base_branch")
     v = gh_json(["pr", "view", pr, "--repo", repo, "--json",
-                 "state,isDraft,headRefOid,baseRefName,files,autoMergeRequest,commits"])
+                 "state,isDraft,headRefOid,baseRefName,files,autoMergeRequest,commits,"
+                 "mergeable,reviewDecision"])
     fails = []
     if v.get("state") != "OPEN":
         fails.append(f"PR is {v.get('state')}")
@@ -851,8 +884,17 @@ def verify_pr(pr, repo, report, area):
         fails.append(f"base is {v.get('baseRefName')}, not {base}")
     if v.get("autoMergeRequest"):
         fails.append("auto-merge is on")
+    # A PR the human cannot merge, or one a reviewer sent back, is not ready (2026-11-15 audit).
+    if v.get("mergeable") == "CONFLICTING":
+        fails.append("conflicts with the base branch")
+    elif v.get("mergeable") == "UNKNOWN":
+        fails.append("mergeability unknown (GitHub is still computing it): run verify-pr again in a minute")
+    if v.get("reviewDecision") == "CHANGES_REQUESTED":
+        fails.append("a reviewer requested changes")
     head = v.get("headRefOid", "")
     files = [f.get("path", "") for f in v.get("files") or []]
+    if len(files) >= 100:   # gh lists at most 100 files: the area check would miss the rest
+        fails.append(f"{len(files)}+ files: too many to check against the area; split the PR")
     commits = v.get("commits") or []
     last_commit = parse_time(commits[-1]["committedDate"]) if commits and commits[-1].get("committedDate") else None
 
@@ -897,7 +939,7 @@ def verify_pr(pr, repo, report, area):
 
     globs = [g.strip() for g in area.split(",") if g.strip()]
     if globs:
-        outside = [p for p in files if not any(fnmatch(p, g) for g in globs)]
+        outside = [p for p in files if not any(fnmatchcase(p, g) for g in globs)]
         if outside:
             more = f" (+{len(outside) - 3})" if len(outside) > 3 else ""
             fails.append("outside the chunk's area: " + ", ".join(outside[:3]) + more)
@@ -940,7 +982,10 @@ def stall_line(path, window_h, max_attempts):
         ref = datetime.fromtimestamp(ls_path.stat().st_mtime, timezone.utc)
         last = ref.strftime("%Y-%m-%dT%H:%M:%SZ")
     else:
-        ref = parse_time(last)
+        try:
+            ref = parse_time(last)
+        except ValueError:
+            return f"STALL QUIET unreadable stamp {last!r} in {show_path(path)}: fix progress-line"
     age_h = (datetime.now(timezone.utc) - ref).total_seconds() / 3600
     if age_h > window_h:
         return f"STALL QUIET {age_h:.1f}h since {last}"
@@ -1002,12 +1047,18 @@ def cmd_lock(args):
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", res):
         raise Usage(f"resource must be lower-case letters, digits and dashes, got {res!r}")
     d = locks / res
-    if sub == "acquire":
-        holder = opt(args, "--holder")
+    def full_holder(verb):
+        # A key like t1/L1/K1/x#2 repeats in every project: the holder carries its repository,
+        # or one project could take or release another's lock (2026-11-15 audit).
+        h, r = opt(args, "--holder"), opt(args, "--repo")
         no_rest(args)
-        if not holder:
-            raise Usage("lock acquire <resource> --holder H")
-        check_value("holder", holder)
+        if not h or not r:
+            raise Usage(f"lock {verb} <resource> --holder H --repo R")
+        project_dir(r)
+        check_value("holder", h)
+        return f"{r}:{h}"
+    if sub == "acquire":
+        holder = full_holder("acquire")
         try:
             d.mkdir()
         except FileExistsError:
@@ -1020,10 +1071,7 @@ def cmd_lock(args):
         write_atomic(d / "holder", f"{holder} since {now()}\n")
         print(f"ACQUIRED {res} {holder}")
     elif sub == "release":
-        holder = opt(args, "--holder")
-        no_rest(args)
-        if not holder:
-            raise Usage("lock release <resource> --holder H")
+        holder = full_holder("release")
         if not d.exists():
             raise NotFound(f"NOT HELD {res}")
         cur = read_holder(d).split(" since ")[0].strip()
@@ -1052,31 +1100,63 @@ CHUNK_KINDS = ("contract", "foundation", "impl", "assembly")
 
 def parse_cut(path):
     """The cut file (references/decomposition.md, "The cut file"): one `## K<n> <kind> — <title>`
-    block per chunk with `AREA:`, `AFTER:`, `ITEMS:` and `RESOURCES:` lines."""
+    block per chunk with `AREA:`, `AFTER:`, `ITEMS:` and `RESOURCES:` lines (a field may repeat,
+    and an indented line after a field continues it), plus the free-text `DONE WHEN:` and
+    `SEAMS:`. Anything else inside a chunk, and any `##`/`###` heading that is not a chunk, is
+    refused: a line the parser skips is an area nobody checks (2026-11-15 audit: a heading without
+    the dash vanished and its AREA was added to the chunk above)."""
     chunks, cur, bad = {}, None, []
+    last = None                                     # the list field an indented line continues
     for no, line in enumerate(read_text(path).splitlines(), 1):
-        m = re.match(r"^##\s+(\S+)\s*(\S*)\s*(?:[—–-]+\s*(.*))?$", line)
-        if m:
-            cid, kind = m.group(1), m.group(2)
-            if not re.fullmatch(r"K\d+", cid) or kind not in CHUNK_KINDS:
+        if re.match(r"^#{2,}\s", line):
+            m = re.match(r"^##\s+(K\d+)\s+(\S+)\s+[—–-]+\s*(.*)$", line)
+            if not m or m.group(2) not in CHUNK_KINDS:
                 bad.append(f"line {no}: a chunk heading is '## K<n> <{'|'.join(CHUNK_KINDS)}> — "
                            f"<title>', got {line.strip()!r}")
-                cur = None
+                cur, last = None, None
                 continue
+            cid = m.group(1)
             if cid in chunks:
                 bad.append(f"line {no}: {cid} twice")
-            cur = chunks[cid] = {"kind": kind, "title": (m.group(3) or "").strip(), "area": [],
+            cur = chunks[cid] = {"kind": m.group(2), "title": m.group(3).strip(), "area": [],
                                  "after": [], "items": [], "resources": []}
+            last = None
             continue
-        if cur is None:
+        if cur is None or not line.strip():
+            if not line.strip():
+                last = None
             continue
         m = re.match(r"^(AREA|AFTER|ITEMS|RESOURCES):\s*(.*)$", line.strip())
         if m:
-            vals = [v.strip() for v in re.split(r"[,;]", m.group(2)) if v.strip()]
-            if [v.lower() for v in vals] == ["none"]:
-                vals = []
-            cur[m.group(1).lower()] = vals
+            last = m.group(1).lower()
+            text = m.group(2)
+        elif re.match(r"^(DONE WHEN|SEAMS):", line.strip()):
+            last = None
+            continue
+        elif line[:1] in (" ", "\t") and last:
+            text = line.strip()
+        else:
+            bad.append(f"line {no}: not a field of chunk {list(chunks)[-1]}: {line.strip()[:60]!r} "
+                       f"(fields: AREA, AFTER, ITEMS, RESOURCES, DONE WHEN, SEAMS)")
+            continue
+        vals = [v.strip() for v in re.split(r"[,;]", text) if v.strip()]
+        if [v.lower() for v in vals] == ["none"]:
+            vals = []
+        cur[last] += vals
     return chunks, bad
+
+
+def area_glob_problem(g):
+    """A glob verify-pr would read differently from what its author meant, or not at all."""
+    if "{" in g or "}" in g:
+        return "braces are not globs here; list each path"
+    if "\\" in g:
+        return "use / not \\"
+    if g.startswith("./") or g.startswith("/"):
+        return "paths are relative to the repository root, without ./ or /"
+    if g.endswith("/"):
+        return "a folder is <folder>/**"
+    return None
 
 
 def glob_prefix(g):
@@ -1087,10 +1167,11 @@ def glob_prefix(g):
 def globs_may_overlap(a, b):
     """Could one path match both globs (fnmatch, as verify-pr reads AREA: `*` crosses `/`)?
     Conservative: a glob whose literal prefix is a prefix of the other's covers it."""
+    a, b = a.lower(), b.lower()       # conservative: on a case-insensitive disk these are one file
     if a == b:
-        return True
+        return True       # conservative: on a case-insensitive disk these are one file
     sample = lambda g: re.sub(r"\[[^\]]*\]", "x", g).replace("**", "x").replace("*", "x").replace("?", "x")
-    if fnmatch(sample(a), b) or fnmatch(sample(b), a):
+    if fnmatchcase(sample(a), b) or fnmatchcase(sample(b), a):
         return True
     pa, pb = glob_prefix(a), glob_prefix(b)
     if pa != a and pb.startswith(pa):
@@ -1127,14 +1208,21 @@ def cmd_cut_check(args):
     if files is None and not notes:
         notes.append("no file list (--files or a profile's main_checkout): only globs compared")
 
+    if not repo or "max_lanes" not in prof:
+        if not max_lanes_s:
+            notes.append("no max_lanes in the profile: capped at 1 lane (set it in project.json)")
     for cid, c in chunks.items():
         if not c["area"]:
             fails.append(f"{cid} has no AREA")
+        for g in c["area"]:
+            why = area_glob_problem(g)
+            if why:
+                fails.append(f"{cid} AREA {g!r}: {why}")
         for a in c["after"]:
             if a not in chunks:
                 fails.append(f"{cid} AFTER {a}: no such chunk")
         if files is not None:
-            c["files"] = {p for p in files if any(fnmatch(p, g) for g in c["area"])}
+            c["files"] = {p for p in files if any(fnmatchcase(p, g) for g in c["area"])}
             if not c["files"] and c["kind"] != "contract":
                 notes.append(f"{cid}: AREA matches no existing file (new files only?)")
     # Transitive AFTER; a cycle is a cut no lane can start.
@@ -1167,7 +1255,8 @@ def cmd_cut_check(args):
                 continue                      # one runs after the other: they may share files
             cx, cy = chunks[x], chunks[y]
             pairs = [f"{a} ~ {b}" for a in cx["area"] for b in cy["area"] if globs_may_overlap(a, b)]
-            shared = sorted(cx.get("files", set()) & cy.get("files", set()))
+            lx = {p.lower(): p for p in cx.get("files", set())}
+            shared = sorted(lx[k] for k in lx.keys() & {p.lower() for p in cy.get("files", set())})
             if shared:
                 more = f" (+{len(shared) - 3})" if len(shared) > 3 else ""
                 fails.append(f"{x} and {y} run in parallel and both may change "
@@ -1213,11 +1302,14 @@ USAGE_WEIGHTS = {"in": 1.0, "cw": 1.25, "cr": 0.1, "out": 5.0}
 def transcript_folder(value):
     """A transcript folder from a folder name under PROJECTS, a path to it, or a session's working
     directory (Claude Code names the folder after it, every non-alphanumeric character a '-')."""
+    value = value.rstrip("/\\") or value                # a trailing slash used to drop the folder
     m = re.match(r"^/([A-Za-z])/(.*)$", value)          # Git Bash /c/Dev/x
-    if m:
+    if m and os.name == "nt":
         value = f"{m.group(1).upper()}:/{m.group(2)}"
     p = pathlib.Path(value)
-    if p.is_dir() and any(p.glob("*.jsonl")):
+    # Only a folder right under PROJECTS is a transcript folder; a working directory that happens
+    # to hold a *.jsonl is a working directory (2026-11-15 audit).
+    if p.is_dir() and p.resolve().parent == PROJECTS.resolve():
         return p
     if not re.search(r"[/\\:]", value) and (PROJECTS / value).is_dir():   # a bare folder name
         return PROJECTS / value
@@ -1228,6 +1320,7 @@ def usage_of(files, since, until, seen):
     """Token usage of the assistant messages in these transcripts inside [since, until]. A message
     is split over several records that repeat its usage: each message id counts once."""
     tot = {"turns": 0, "in": 0, "cw": 0, "cr": 0, "out": 0}
+    lo, hi = parse_time(since), parse_time(until)        # times, not strings: ".500Z" > "Z"
     for f in files:
         try:
             fh = open(f, encoding="utf-8", errors="replace")
@@ -1241,8 +1334,11 @@ def usage_of(files, since, until, seen):
                     r = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                ts = r.get("timestamp") or ""
-                if not (since <= ts <= until):
+                try:
+                    ts = parse_time(r.get("timestamp") or "")
+                except ValueError:
+                    continue
+                if not (lo <= ts <= hi):
                     continue
                 m = r.get("message")
                 u = m.get("usage") if isinstance(m, dict) else None
@@ -1296,8 +1392,13 @@ def cmd_usage(args):
     if tj is None:
         raise NotFound(f"NO TASK {show_path(t)}")
     tid = tj.get("id") or t.name
-    since = since or tj.get("created") or ""
+    since = since or tj.get("created") or "1970-01-01T00:00:00Z"
     until = until or tj.get("closed") or now()
+    for name, v in (("--since", since), ("--until", until)):
+        try:
+            parse_time(v)
+        except ValueError:
+            raise Usage(f"{name} must be an ISO time like 2026-11-12T13:00:00Z, got {v!r}")
     # Transcripts that name this task's folder (any slash, JSON-escaped or not).
     marker = re.compile(re.escape(t.parent.parent.name) + r"[/\\]+tasks[/\\]+" + re.escape(tid)
                         + r"(?![A-Za-z0-9])")

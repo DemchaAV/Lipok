@@ -48,7 +48,7 @@ enforces it mechanically; `verify-pr --area` enforces each chunk's area on every
    the main checkout's files (`git ls-files`) and against each other as globs. `CUT FAIL` → fix the
    cut (narrow an area, move a hot file to its owner, add an `AFTER`) and check again; never hand
    out a cut that fails. `CUT OK lanes=<n>` is the number of lanes: the widest wave, capped by the
-   profile's `max_lanes`.
+   profile's `max_lanes` (1 when the profile has none — set it).
 8. **One lane is right when** the widest wave is 1; a side of a seam would get fewer than two items
    (too fine — one lane does both); the areas cannot be separated without a contract the project
    cannot check; or the task is a day's work. Say why in one line when you show the cut.

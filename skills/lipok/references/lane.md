@@ -10,7 +10,7 @@ watches that it is alive and moving. The items inside the chunk are the worker's
 Shell state does not survive between Bash calls: start every call that needs them with
 
 ```bash
-SK="$HOME/.claude/skills/lipok/scripts"; A="python -I $SK/lipok.py"; L=<task>/lanes/<N>/state.md
+SK="$HOME/.claude/skills/lipok/scripts"; A="$(command -v python || command -v python3) -I $SK/lipok.py"; L=<task>/lanes/<N>/state.md
 ```
 
 - `<task>` — the task folder (`$A task-active --repo <repo>`); `<tid>` its id; `<N>` the lane.
@@ -69,7 +69,7 @@ replaced on the user's turn: propose a card and send a `PushNotification`.
 - `name` = the branch name, `title: "<task title> — lane <N>"`;
 - `prompt`: "You are the worker of lane <N> of Lipok task <tid> (project <repo>). Use the
   `lipok` skill, role worker. The Manager is `<Manager local id>`. First turn: send the Manager
-  the line `LANE <N> <folder>`, where folder is `pwd -W | sed 's/[^A-Za-z0-9]/-/g'` (check that
+  the line `LANE <N> <folder>`, where folder is `(pwd -W 2>/dev/null || pwd) | sed 's/[^A-Za-z0-9]/-/g'` (check that
   `~/.claude/projects/<folder>` exists), and end the turn. Chunks then arrive as messages
   `CHUNK <key> — <brief path>`.";
 - `background`: the task's goal in two sentences and the decisions it rests on, with dates.
@@ -80,9 +80,7 @@ other's messages without approval. Then `$A set $L worker=<id> branch-name=<bran
 
 ## Hand out a chunk
 
-1. **Pick it** from the task's cut (`<task>/decomposition/cut.md`; `decomposition.md`, "Handing
-   out by waves"): the lowest chunk not yet handed out whose `AFTER` chunks are all `DONE`. None →
-   the lane waits. `paused: yes` — hand nothing out.
+1. **Pick it** from the task's cut (`<task>/decomposition/cut.md`; `decomposition.md`, "Handing out by waves"): the lowest chunk not yet handed out whose `AFTER` chunks are all `DONE`. A chunk is handed out when `<task>/chunks/<K>/brief.md` exists, and `DONE` when `<task>/chunks/<K>/done.md` exists. None → the lane waits. `paused: yes` — hand nothing out.
 2. `$A chunk $L --chunk K<n>` → `BRIEF`, `PLAN`, `LANE-STATE`, `CHUNK-KEY`.
 3. **Mark** the chunk's items `[~]` in the task's plan with `crlf-replace.py`; rebuild the
    dashboard if the profile has one.
@@ -129,14 +127,12 @@ a `PLAN`, `READY`, `MERGED` or `CHUNK_DONE`), clears `death-turn`, opens the dec
 `<task>/lanes/<N>/events.log`; do nothing else with it. The late check it does:
 - a chunk line (`PLAN`, `CHUNK_DONE`, a `DECISION` or `BLOCKED` with a chunk key): its key must be
   `chunk-key`;
-- `MERGED`: its chunk must be `chunk-key`, and the PR is checked against GitHub, not against the
-  lane-state — the worker moves to the next item in the same turn, so the lane-state's `key` has
-  already changed;
+- `MERGED`: its chunk must be `chunk-key` only — the worker moves to the next item in the same turn, so the lane-state's `key` has already changed; `$A book` then confirms the merge on GitHub;
 - any other item line (`READY`, `DECISION`, `BLOCKED`, `ALIVE`, `PAUSED`): its key must be the
   lane-state's `key`.
 
 - **`LANE <N> <folder>`** — "Start the worker".
-- **`PLAN <ck> — <plan.md>`** — read the plan once. Check it against the whole picture: the other
+- **`PLAN <ck> — <plan.md>`** — `$A set $L chunk-status=PLAN`; read the plan once. Check it against the whole picture: the other
   chunks' areas and plans, the contracts, the DRs, the task's acceptance, what the plan records.
   - It fits → `GO <ck>`; `$A set $L chunk-status=WORKING`; tell the user in two or three lines
     what the chunk will do, in what order.
@@ -156,8 +152,7 @@ a `PLAN`, `READY`, `MERGED` or `CHUNK_DONE`), clears `death-turn`, opens the dec
 - **`DECISION <key> — <report>`** — read the report's `DECISION:` block (a chunk-level
   `DECISION <ck> — <note>` from the plan stage: the note holds it); `$A set $L
   chunk-status=DECISION`; `manager.md`, "Decisions".
-- **`BLOCKED <key> — <report>`** — read the report's user block (or the chunk note); `$A set $L chunk-status=BLOCKED`;
-  post it; `PushNotification` "Blocked: <item>"; ask the user.
+- **`BLOCKED <key> — <report>`** — read the report's user block (or the chunk note); `$A set $L chunk-status=BLOCKED`; post it; `PushNotification` "Blocked: <item>"; ask the user. **The answer** goes back the way a decision does (`manager.md`, "Decisions", step 3–4): a DR when it decides something; `RESUME <key> — <note with the answer>` (or `DECISION <key> — <DR>`); `$A set $L chunk-status=WORKING`; `$A line $L ANSWERED`; re-arm the stall watch. The answer is to drop it: for an item, `REDIRECT <key> — <note: drop this item, mark it dropped in plan.md, go on with the next>`; for the chunk, `STOP <ck>` and `$A set $L chunk-status=DROPPED`.
 - **`PAUSED`** — one chat line with what it stopped.
 - **`ALIVE <key> — <text>`** — the answer to `PING`: "Supervision".
 - **`CHUNK_DONE <ck> — <done.md>`** — read `done.md`; `$A set $L chunk-status=DONE`; stop the
@@ -203,15 +198,13 @@ Check the worker (`get_session`) and its `lane-state.md` before saying anything.
 
 **Waiting is not idling.** The worker is legitimately waiting, and sends nothing upward, while its
 lane-state names a live wait: `watch` (its PR watch — CI or the merge; `wait-pr.sh` writes nothing
-until it exits) or `gate-run` (the gate, whose output file grows). A worker that is not running,
-names no wait, holds an item that is not `MERGED`/`REVIEWED`, and sent no line since its last
-`turn` has stopped without telling anyone: that is the **silent idle**.
+until it exits) or `gate-run` (the gate, whose output file grows). A worker that is not running, names no wait, holds an item that is not `MERGED`/`REVIEWED`, while its chunk is `WORKING`, has stopped without telling anyone: that is the **silent idle**. A lane that waits on you or the user (`chunk-status` `PLAN`, `DECISION`, `BLOCKED`, or `pr-status: READY`) is waiting, not idle.
 
 | Watch line | What to do |
 |---|---|
 | `SESSION LIMIT <m>m <text>` | a usage limit, not a dead turn; you are limited too. A **timer** until the reset the text names plus 5 minutes (60 minutes if none), `$A set $L pending="limit <timer id>"`, one `PushNotification` with the reset time. On the timer: `RESUME <key>` with a note "limit lifted, continue"; re-arm; `pending=none` |
 | `SESSION ERROR <m>m <text>` | the turn died on the model. `death-turn` equals the lane-state's `key` (it died on this item before, with no line from the worker since — every line resets `death-turn`) → the second death: switch the worker's model (`set_session_model`) and tell the user. Otherwise `$A set $L death-turn=<key>`; `RESUME <key>` with a note: what killed the turn, that it was the model, not the content; re-arm; one chat line |
-| `SESSION QUIET <m>m <file>` | facts, not words. `get_session` running → re-arm silently. The lane-state names a live wait (`watch`, or `gate-run` whose output still grows), or a lock it waits for (`$A lock show`) → re-arm silently. A **silent idle** (above) → `RESUME <key>` "report and a line up, please"; the second in a row → tell the user the worker is losing the protocol. Anything else → `PING <key>`; re-arm |
+| `SESSION QUIET <m>m <file>` | facts, not words. `get_session` running → re-arm silently. The lane waits on you or the user (`chunk-status` `PLAN`, `DECISION`, `BLOCKED`, or `pr-status: READY`) → re-arm silently. The lane-state names a live wait (`watch`, or `gate-run` whose output still grows), or a lock it waits for (`$A lock show`) → re-arm silently. A **silent idle** (above) → `RESUME <key>` "report and a line up, please"; the second in a row → tell the user the worker is losing the protocol. Anything else → `PING <key>`; re-arm |
 | `SESSION OK after 12h` | re-arm silently |
 | `SESSION GONE`, `ERROR no such transcript folder`, `ERROR no transcript in` | `get_session`. Gone → "Replace a worker". There → `RESUME` with a note asking for one line `LANE <N> <folder>`, set `worker-dir` from the answer, re-arm |
 | `STALL QUIET` | `PING <key>`; re-arm the stall watch. No `ALIVE` before the next stall line → as a dead turn (`RESUME`), and tell the user |

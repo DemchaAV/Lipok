@@ -47,7 +47,7 @@ fi
 
 BASE="${LIPOK_PROJECTS_DIR:-$HOME/.claude/projects}"
 case "$DIR" in
-  [A-Za-z]:*) DIR=$(cygpath -u "$DIR" 2>/dev/null || echo "$DIR") ;;
+  [A-Za-z]:*) command -v cygpath >/dev/null 2>&1 && DIR=$(cygpath -u "$DIR") ;;
 esac
 case "$DIR" in
   */*) ;;                       # a path was given
@@ -59,9 +59,15 @@ case "$DIR" in
   *.jsonl) FIXED_FILE="$DIR"; DIR=$(dirname "$DIR") ;;
 esac
 
-# The folder (or the file) may not exist yet: it appears with the worker's first turn.
+# The folder, its first transcript, or the given file may not exist yet: they appear with the
+# worker's first turn (a folder holding only memory/ is not a transcript yet; 2026-11-15 audit).
+has_transcript() { compgen -G "$DIR/*.jsonl" >/dev/null 2>&1; }
 WAITED=0
-while { [ ! -d "$DIR" ] || { [ -n "$FIXED_FILE" ] && [ ! -f "$FIXED_FILE" ]; }; } && [ "$WAITED" -lt "$WAIT_DIR" ]; do
+not_ready() {
+  [ ! -d "$DIR" ] && return 0
+  if [ -n "$FIXED_FILE" ]; then [ ! -f "$FIXED_FILE" ]; else ! has_transcript; fi
+}
+while not_ready && [ "$WAITED" -lt "$WAIT_DIR" ]; do
   sleep 10
   WAITED=$(( WAITED + 10 ))
 done
@@ -72,6 +78,11 @@ fi
 
 [ "$DELAY" -gt 0 ] && sleep "$DELAY"
 ARMED=$(date +%s)
+
+# File times: GNU stat (Linux, Git Bash) or BSD stat (macOS).
+mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+PYBIN=""
+for P in python python3; do "$P" -c '' >/dev/null 2>&1 && { PYBIN=$P; break; }; done
 DEADLINE=$(( ARMED + HOURS * 3600 ))
 
 # Prints "LIMIT <text>" or "ERROR <text>" when the LAST user/assistant record of the transcript is
@@ -79,7 +90,8 @@ DEADLINE=$(( ARMED + HOURS * 3600 ))
 # counts: a brief or a message that merely quotes an error must not trip the watch. Reads the last
 # 4 MB, so trailing system records cannot hide the error.
 last_error() {
-  python -I -c '
+  [ -n "$PYBIN" ] || return 0
+  "$PYBIN" -I -c '
 import sys, json, os, re
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -136,7 +148,7 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     exit 2
   fi
 
-  MTIME=$(stat -c %Y "$FILE" 2>/dev/null || true)
+  MTIME=$(mtime "$FILE" || true)
   if [ -z "$MTIME" ]; then
     echo "SESSION GONE $FILE (cannot read its time)"
     exit 2
@@ -147,7 +159,7 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   ACTIVE="$MTIME"
   SUB=$(ls -t "${FILE%.jsonl}"/subagents/*.jsonl 2>/dev/null | head -1)
   if [ -n "$SUB" ]; then
-    SUBTIME=$(stat -c %Y "$SUB" 2>/dev/null || echo 0)
+    SUBTIME=$(mtime "$SUB" || echo 0)
     [ "$SUBTIME" -gt "$ACTIVE" ] && ACTIVE="$SUBTIME"
   fi
   [ "$ARMED" -gt "$ACTIVE" ] && ACTIVE="$ARMED"

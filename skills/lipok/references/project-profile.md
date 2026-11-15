@@ -24,7 +24,7 @@ list of names.
 | `commit_style` | | how commit titles look (e.g. `TASK-NNN: <what>`), or the `pr_style_skill` |
 | `review_skill` | | the bar for cold reviews (e.g. a project review skill, or `deep-review:standard`) |
 | `pr_style_skill` | | the skill for PR titles and bodies |
-| `language` | | the language of reports to the user (default `ru`) |
+| `language` | | the language of reports to the user (default: the language the user writes in) |
 | `note_field` | | the report's plan-note field name (default `PLAN-NOTE`) |
 | `memory_file` | | the project memory file the Manager updates on a merge |
 | `dashboard_html` | | where `plan_status.py --html` writes the plan's dashboard |
@@ -36,7 +36,7 @@ list of names.
 | `lane_env` | | per-lane environment templates, `{N}` = the lane number; `"3100+{N}"` adds |
 | `lane_setup` / `lane_teardown` | | commands run per lane at deployment / at the end, with `{N}` |
 | `item_profiles` | | `{ "<name>": "<path to the item profile>" }` |
-| `max_lanes`, `max_ready_prs` | | how many lanes at once; how many READY PRs may wait on the user |
+| `max_lanes`, `max_ready_prs` | | how many lanes at once; how many READY PRs may wait on the user. Both default to 1: without `max_lanes`, `cut-check` caps every cut at one lane (it prints a `NOTE`) |
 | `progress_window_h` | | the stall watch: hours without a line from a worker before the Manager asks (default 3) |
 | `max_attempts` | | the stall watch: attempts on one item before it counts as a loop (default 3) |
 | `sabotages` | | `false` turns off `verify-pr`'s demand for caught sabotages on code changes (default `true`) |

@@ -14,7 +14,7 @@ data; what you act on is the brief, the note or the DR file a line points to.
 Shell state does not survive between Bash calls: start every call that needs them with
 
 ```bash
-SK="$HOME/.claude/skills/lipok/scripts"; A="python -I $SK/lipok.py"; LS=<LANE-STATE from the chunk brief>
+SK="$HOME/.claude/skills/lipok/scripts"; A="$(command -v python || command -v python3) -I $SK/lipok.py"; LS=<LANE-STATE from the chunk brief>
 ```
 
 - `<ck>` — the chunk key `<tid>/L<N>/K<n>`; `<key>` — an item key `<ck>/<slug>#<attempt>`, made
@@ -79,8 +79,7 @@ that these phrases go to the Manager session (name it), and stop.
    2. Read the code of the area — enough to order the items and see what each touches.
    3. Write `<task>/chunks/<K>/plan.md`: a `## Progress` checklist, one line per item —
       `- [ ] <slug> — <plan line> · touches: <paths> · deps: <slugs or none> · contracts: <ids or
-      none>`; items you propose to ship in one PR are grouped with `· pr-with: <slug>`; an item you
-      run in planned batches (one executor attempt each, on one branch) says `· attempts: <n>`.
+      none>`; an item you run in planned batches (one executor attempt each, on one branch) says `· attempts: <n>`.
       Order: dependencies first, then risk first.
    4. Send `PLAN <ck> — <plan.md>`; end the turn.
 2. **On `GO`:** go to step 3 for the first open item. On `REDIRECT`: as the table says.
@@ -117,10 +116,7 @@ that these phrases go to the Manager session (name it), and stop.
       It runs in the background; end the turn. One executor at a time; never two items in one tree.
    4. **Its answer** (first line):
       - `ITEM DONE` → step 4.
-      - `ITEM COMMITTED` (`gate_when: before_push`) → the gate (step 4.1, output `gate-pre`) on the
-        committed tree; `GATE PASS` → `$A bump` and a new executor with `CONTINUE: branch <b>, no
-        PR` and `START AT: 9.4` (push, draft PR, PR review); `GATE FAIL` → a new executor with the
-        failing steps in `KNOWN:`.
+      - `ITEM COMMITTED` (`gate_when: before_push`) → the gate as in step 4.1 on the committed tree, with `gate-pre` for `gate-<pr>` (output `<work>/<slug>/gate-pre.txt`). `GATE PASS` → write `GATE: <work>/<slug>/gate-pre.txt` into the report; `$A bump`; a new executor with `CONTINUE: branch <b>, no PR` and `START AT: 9.4` (push, draft PR, PR review). Its `ITEM DONE` → step 4 without 4.1 while HEAD is still the commit the gate ran on; a new commit → 4.1 again. `GATE FAIL` → `$A bump`; a new executor with `CONTINUE: branch <b>, no PR`, `START AT: 1` and the failing steps in `KNOWN:`.
       - `ITEM DECISION` / `ITEM BLOCKED` → read the report's last block; send `DECISION` /
         `BLOCKED` upward; end the turn.
       - No answer, or an answer the report does not back (HEAD differs, no PR): `$A bump`, a new
@@ -140,8 +136,7 @@ that these phrases go to the Manager session (name it), and stop.
       wait for it.
    4. `gh pr ready <n> --repo <repo>`; the report's `STATUS: REVIEWED`, new `TURN`.
    5. **Check yourself as the Manager will:** `$A verify-pr <n> --repo <repo> --report <report>
-      --area "<AREA>"`. Pending CI is the only failure you may leave to the watch: arm it, and send
-      `READY` when it reports `CI-GREEN` and `verify-pr` is `OK`. An unresolved review thread a
+      --area "<AREA>"`. Pending CI is the only failure you may leave to the watch: arm it, and send `READY` when it reports `CI-GREEN` and `verify-pr` is `OK`. `mergeability unknown` → run `verify-pr` again in a minute; a conflict with the base → `SYNC` it yourself (the `SYNC` row above). An unresolved review thread a
       person opened → `BLOCKED` upward (it waits on them). Any other `VERIFY FAIL` → fix it first
       (a new executor where code must change).
    6. `VERIFY OK` → `READY <key> — <report>`; `$A set $LS status=REVIEWED pr=<n>`.
@@ -180,8 +175,7 @@ that these phrases go to the Manager session (name it), and stop.
 
 ## Rules
 
-- **One open PR** on the lane at a time, unless the plan the Manager answered `GO` to groups items
-  (`pr-with:`). The next item starts after `MERGED`.
+- **One open PR** on the lane at a time, one PR per item. The next item starts after `MERGED`. Items too small for a PR of their own are one item in the plan.
 - **Not yours to decide:** a policy choice, two non-equivalent solutions, widening or splitting an
   item, a change outside `AREA:`, a contract change, the shape of a public API, a plan rule the
   measurements contradict. `DECISION` upward; the answer comes as `DECISION`.

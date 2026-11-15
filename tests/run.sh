@@ -298,4 +298,154 @@ printf 'nothing
 ' > "$CUTD/c.md"
 t cut-empty 4 "no chunks" -- C
 t cut-args 2 "cut-check <cut.md>" -- $A cut-check
+# --- audit fixes (2026-11-15) ---
+# cut-check: every way an overlap used to slip through
+cut <<'M'
+## K1 impl — a
+AREA: src/web/**
+AREA: src/server/**
+## K2 impl — b
+AREA: src/web/menu.tsx
+M
+t cut-two-area-lines 4 "both may change src/web/menu.tsx" -- C --max-lanes 3
+cut <<'M'
+## K1 impl — a
+AREA: src/server/**,
+  src/web/**
+## K2 impl — b
+AREA: src/web/menu.tsx
+M
+t cut-wrapped-area 4 "both may change src/web/menu.tsx" -- C --max-lanes 3
+cut <<'M'
+## K1 impl — a
+AREA: src/server/**
+## K2 impl web part
+AREA: src/web/**
+M
+t cut-bad-heading 4 "a chunk heading is" -- C --max-lanes 3
+cut <<'M'
+## K1 impl — a
+AREA: src/server/**
+### K2 impl — b
+AREA: src/web/**
+M
+t cut-h3-heading 4 "a chunk heading is" -- C --max-lanes 3
+cut <<'M'
+## K1 impl — a
+AREA: src/server/**
+Some prose about the chunk
+DONE WHEN: it works
+SEAMS: none
+M
+t cut-prose-line 4 "not a field of chunk K1" -- C
+cut <<'M'
+## K1 impl — a
+AREA: src/server/
+## K2 impl — b
+AREA: ./src/web/**
+M
+t cut-bad-globs 4 "a folder is <folder>/**" -- C
+t cut-bad-globs-dot 4 "without ./ or /" -- C
+cut <<'M'
+## K1 impl — a
+AREA: Src/Server/*.ts
+## K2 impl — b
+AREA: src/server/n*
+M
+t cut-case-overlap 4 "areas may overlap" -- C --max-lanes 3
+cut <<'M'
+## K1 impl — a
+AREA: src/server/**
+DONE WHEN: done
+## K2 impl — b
+AREA: src/web/**
+M
+t cut-fields-ok 0 "CUT OK lanes=2" -- C --max-lanes 3
+t cut-no-max-lanes-note 0 "NOTE no max_lanes in the profile" -- C
+
+# verify-pr: conflicts, changes requested, case, too many files, a PR with no checks at all
+mk
+t vp-conflict 4 "conflicts with the base branch" -- env FAKE_GH_CASE=conflict $A verify-pr 7 --repo o/r --report "$R"
+t vp-unknown 4 "mergeability unknown" -- env FAKE_GH_CASE=unknown $A verify-pr 7 --repo o/r --report "$R"
+t vp-changes 4 "a reviewer requested changes" -- env FAKE_GH_CASE=changes $A verify-pr 7 --repo o/r --report "$R"
+t vp-case 4 "outside the chunk's area: SRC/App.js" -- env FAKE_GH_CASE=upper $A verify-pr 7 --repo o/r --report "$R" --area "src/*,docs/*"
+t vp-many-files 4 "100+ files" -- env FAKE_GH_CASE=manyfiles $A verify-pr 7 --repo o/r --report "$R"
+t vp-no-checks-real 4 "no CI checks registered" -- env FAKE_GH_CASE=nochecks-real $A verify-pr 7 --repo o/r --report "$R"
+
+# book: a lane holding another PR refuses; booked keeps every PR
+$A set "$L" pr=9 pr-status=READY >/dev/null
+t book-other-pr 4 "the lane holds PR #9" -- env FAKE_GH_CASE=merged $A book "$L" 8 --repo o/r
+t book-other-pr-kept 0 "READY" -- $A get "$L" pr-status
+$A set "$L" pr=none pr-status=none >/dev/null
+t book-second 0 "BOOKED 8" -- env FAKE_GH_CASE=merged $A book "$L" 8 --repo o/r
+t book-list 0 "7,8" -- $A get "$L" booked
+t book-old-again 0 "ALREADY BOOKED 7" -- env FAKE_GH_CASE=merged $A book "$L" 7 --repo o/r
+
+# set --expect: every pair after it is a condition
+$A set "$L" chunk-status=WORKING paused=no >/dev/null
+t expect-multi 0 "SET paused=no" -- $A set "$L" paused=no --expect chunk-status=WORKING lane=1
+t expect-multi-not-set 0 "1" -- $A get "$L" lane
+t expect-multi-refused 4 "expected lane=2" -- $A set "$L" paused=no --expect chunk-status=WORKING lane=2
+
+# times: a stamp without a zone is UTC; an unreadable one does not crash the watch
+$A set "$L" chunk-status=WORKING pr-status=none paused=no progress-line=2026-01-01T00:00:00 >/dev/null
+t stall-naive-time 0 "STALL QUIET" -- $A stall-check "$L" --repo o/r
+$A set "$L" progress-line=yesterday >/dev/null
+t stall-bad-time 0 "unreadable stamp" -- $A stall-check "$L" --repo o/r
+$A set "$L" wait-kind=decision wait-since=2026-01-01T00:00:00 >/dev/null
+t answered-naive-time 0 "ANSWERED after" -- $A line "$L" ANSWERED
+$A set "$L" "progress-line=$(date -u +%FT%TZ)" >/dev/null
+
+# locks: the holder carries its repository
+t lock-acquire 0 "ACQUIRED db o/r:t1/L1/K1/a#1" -- $A lock acquire db --holder t1/L1/K1/a#1 --repo o/r
+t lock-same-holder 0 "already held by this holder" -- $A lock acquire db --holder t1/L1/K1/a#2 --repo o/r
+t lock-other-repo 4 "HELD db" -- $A lock acquire db --holder t1/L1/K1/a#1 --repo o/q
+t lock-release-other-repo 4 "REFUSED db is held by" -- $A lock release db --holder t1/L1/K1/a#1 --repo o/q
+t lock-no-repo 2 "--holder H --repo R" -- $A lock acquire db --holder t1/L1/K1/a#1
+t lock-release 0 "RELEASED db" -- $A lock release db --holder t1/L1/K1/a#3 --repo o/r
+t lock-free 0 "db: free" -- $A lock show db
+
+# wait-pr.sh: an unreadable profile or no python is an ERROR, never green; decimal numbers
+NOPY="$T/nopy"; mkdir -p "$NOPY"
+printf '#!/bin/sh\nexit 1\n' > "$NOPY/python"; cp "$NOPY/python" "$NOPY/python3"; chmod +x "$NOPY/python" "$NOPY/python3"
+NOPY=$(cygpath -u "$NOPY" 2>/dev/null || echo "$NOPY")
+export FAKE_WAIT_LINE="OPEN||abc1234def|1|0|||test"
+t wp-no-python 1 "ERROR no python" -- bash -c "PATH='$NOPY:$FB:'\"\$PATH\" bash '$SKD/wait-pr.sh' 7 --repo o/r --once"
+printf '{ broken' > "$P"
+t wp-broken-profile 1 "ERROR cannot read the required checks" -- W 7 --repo o/r --once
+cp "$T/profile.bak" "$P"
+t wp-require-none 0 "missing=[]" -- W 7 --repo o/r --require none --once
+t wp-every-zero 2 "at least 1" -- W 7 --repo o/r --every 0
+export FAKE_WAIT_LINE="MERGED|fedcba98|abc1234def|1|0|||test"
+t wp-leading-zero 0 "MERGED fedcba98" -- W 7 --repo o/r --hours 08 --missing-min 09 --every 1
+unset FAKE_WAIT_LINE
+
+# watch-session.sh: a folder with no transcript yet is waited for, not an error at once
+WS2="$T/proj/sess2"; mkdir -p "$WS2/memory"
+t ws-no-transcript 2 "ERROR no transcript" -- timeout 20 bash "$SKD/watch-session.sh" "$WS2" --wait-dir 0
+( sleep 2; echo '{"type":"user"}' > "$WS2/a.jsonl" ) &
+t ws-waits-for-transcript 124 "" -- timeout 8 bash "$SKD/watch-session.sh" "$WS2" --wait-dir 30 --quiet-min 30
+wait
+
+# usage: a worker-dir with a trailing slash still counts
+export LIPOK_PROJECTS_DIR="$CP"
+W2="C--y--claude-worktrees-other-cccccc"; rec "$CP/$W2/w.jsonl" ya 10
+$A set "$L" "worker-dir=$W2/" >/dev/null
+t usage-trailing-slash 0 "worker folders=1" -- U --manager C--m
+unset LIPOK_PROJECTS_DIR
+
+# installers: never into the package itself; a normal install copies both skills
+ROOT=$(cd "$(cygpath -u "$SKD" 2>/dev/null || echo "$SKD")/../../.." && pwd)
+PKG="$T/pkg"; rm -rf "$PKG"; mkdir -p "$PKG"
+cp -R "$ROOT/bin" "$ROOT/skills" "$ROOT/package.json" "$ROOT/install.sh" "$PKG/"
+t inst-node-self 1 "refusing to install into the package itself" -- node "$PKG/bin/lipok.js" install --dir "$PKG/skills"
+t inst-node-inside 1 "refusing to install into the package itself" -- node "$PKG/bin/lipok.js" install --dir "$PKG/skills/lipok"
+t inst-node-dash 1 "--dir needs a folder" -- node "$PKG/bin/lipok.js" install --dir --force
+t inst-sh-self 1 "refusing to install into the package itself" -- env CLAUDE_SKILLS_DIR="$PKG/skills" bash "$PKG/install.sh"
+t inst-source-kept 0 "" -- test -f "$PKG/skills/lipok/SKILL.md"
+t inst-node-ok 0 "installed" -- node "$PKG/bin/lipok.js" install --dir "$T/dest-node"
+t inst-node-copy 0 "" -- diff -rq "$PKG/skills/lipok" "$T/dest-node/lipok"
+t inst-sh-ok 0 "installed" -- env CLAUDE_SKILLS_DIR="$T/dest-sh" bash "$PKG/install.sh"
+t inst-sh-copy 0 "" -- diff -rq "$PKG/skills/lipok-task" "$T/dest-sh/lipok-task"
+t inst-uninstall 0 "removed" -- node "$PKG/bin/lipok.js" uninstall --dir "$T/dest-node"
 echo "PASS=$PASS FAIL=$FAIL"

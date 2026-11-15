@@ -26,10 +26,10 @@ each item to a fresh **executor** subagent, and takes each item to a PR that is 
 
 | What | Where |
 |---|---|
-| Scripts | `SK="$HOME/.claude/skills/lipok/scripts"` (Git Bash) |
+| Scripts | `SK="$HOME/.claude/skills/lipok/scripts"`, `A="$(command -v python || command -v python3) -I $SK/lipok.py"` (bash; Git Bash on Windows) |
 | Project profile | `~/.lipok/projects/<owner>-<repo>/project.json` |
 | Item profiles | `~/.lipok/projects/<owner>-<repo>/item-profiles/<name>.md` |
-| Active task | `python -I $SK/lipok.py task-active --repo <owner/repo>` → `<task>` |
+| Active task | `$A task-active --repo <owner/repo>` → `<task>` |
 | Task record | `<task>/task.json` (only through `lipok.py task-set`) |
 | Lane state — Manager's, chunk level | `<task>/lanes/<N>/state.md` (`lipok.py chunk`, `set`) |
 | Lane state — worker's, item level | `<task>/chunks/<K>/lane-state.md` (`lipok.py item`, `bump`, `set`) |
@@ -46,38 +46,37 @@ absolute path. Always pass absolute paths: a worktree has none of the main check
 
 - `lipok.py` — task folders, both lane states, keys, `verify-pr`, `stall-check`, lane
   environment, machine-wide locks, `cut-check` (chunks of one wave share no file), `usage` (who spent the tokens, read from the transcripts — no
-  model call). `python -I $SK/lipok.py` prints the commands. Exit codes: 0
-  done, 1 a file unreadable, 2 usage, 3 not found, 4 refused. Paths it prints are in `C:/…` form,
-  which Git Bash accepts — quote them. Writers of one file are serialised; values are one line.
+  model call). `$A` alone prints the commands. Exit codes: 0
+  done, 1 a file unreadable, 2 usage, 3 not found, 4 refused. Paths it prints use forward slashes (`C:/…` on Windows, which Git Bash accepts) — quote them. Writers of one file are serialised; values are one line.
   - `chunk <lanes/N/state.md> --chunk K<n>` — the Manager starts a chunk: prints `BRIEF`, `PLAN`,
     `LANE-STATE`, `CHUNK-KEY`; refuses a lane whose chunk is not finished.
   - `item <lane-state.md> --chunk K<n> --slug S --item-file <file> [--attempts N]` — the worker
     starts an item (attempt 1) and prints its `REPORT` and `KEY`; `--attempts N` when the chunk
     plan runs it in N planned executor attempts (batches); `bump <lane-state.md>` makes the next
     attempt. Never compose a key by hand.
-  - `set <state> k=v … [--expect k=v]` — refuses keys that file does not have.
+  - `set <state> k=v … [--expect k=v …]` — refuses keys that file does not have; every pair after `--expect` is a condition.
   - `line <lanes/N/state.md> <TYPE> [<key>]` — the Manager, on every line from the worker: stamps
     `last-line` (and `progress-line` for `PLAN`, `READY`, `MERGED`, `CHUNK_DONE`), clears
     `death-turn`, does the late check (`LATE …`, exit 4, logged), opens the decision wait on
     `DECISION`/`BLOCKED`; `line … ANSWERED` closes it when the Manager sends the answer.
   - `book <lanes/N/state.md> <pr> --repo R` — the Manager, on a merge: `BOOKED <pr> <sha> <date>`
-    (confirmed on GitHub; `booked`, `pr`, `pr-status`, the merge wait), `ALREADY BOOKED <pr>`, or
-    `NOT MERGED <pr> <state>` (exit 4).
+    (confirmed on GitHub; `booked`, `pr`, `pr-status`, the merge wait), `ALREADY BOOKED <pr>` (`booked` lists every PR booked on the lane), `NOT MERGED <pr> <state>` (exit 4), or `REFUSED the lane holds PR #<m>` (exit 4).
   - `verify-pr <pr> --repo R --report F [--area "globs"] [--lane <lanes/N/state.md>]` →
-    `VERIFY OK <pr> <sha>` or `VERIFY FAIL <pr>: <every failing point>`: open, not a draft, the
-    right base, no auto-merge; the report's HEAD is the PR's head; CI finished and green, and every
+    `VERIFY OK <pr> <sha>` or `VERIFY FAIL <pr>: <every failing point>`: open, not a draft, the right base, no auto-merge, no conflict with the base, no review asking for changes; the report's HEAD is the PR's head; CI finished and green, and every
     check in the profile's `required_checks` registered; no unresolved review thread; the report's
-    `TESTS`, `SABOTAGES`, `REVIEW`, `BOTS`, `GATE` lines hold up; every file inside the area. With
+    `TESTS`, `SABOTAGES`, `REVIEW`, `BOTS`, `GATE` lines hold up; every file inside the area (case-sensitive; under 100 files). `mergeability unknown` means GitHub is still computing it: run `verify-pr` again in a minute. With
     `--lane` (the Manager) OK sets `pr`, `pr-status=READY` and opens the merge wait; FAIL sets
     `pr-status=REDIRECTED`. `LIPOK_GH` replaces `gh` for tests.
   - `stall-check <lanes/N/state.md> --repo R [--watch]` → `STALL OK | QUIET | LOOP | IDLE`; a loop
     is counted past the item's planned attempts.
-  - `lock acquire|release|show|break <resource> …` — a holder is its key without `#<attempt>`.
+  - `lock acquire|release <resource> --holder <key> --repo R`, `lock show`, `lock break <resource> --by H` — a holder is `<repo>:<key>` without `#<attempt>`.
+  - `cut-check <cut.md> --repo R` — `CUT OK lanes=<n>` or `CUT FAIL <reasons>` (exit 4): no two chunks of one wave may change one file (`decomposition.md`).
+  - `usage <task> --manager <the Manager's working directory>` — the token split for `final.md`.
 - `wait-pr.sh <pr> --repo <owner/repo> [--hours H] [--delay S] [--skip "<head> CI-GREEN|CI-FAIL"]
-  [--merge-only] [--once] [--missing-min M]` — the worker's PR watch: `MERGED <sha>`, `CLOSED`,
+  [--merge-only] [--once] [--require "a;b"|none] [--missing-min M]` — the worker's PR watch: `MERGED <sha>`, `CLOSED`,
   `CI-FAIL <head> <runs|-> <checks…>`, `CI-GREEN <head>` (only once every `required_checks` name
   has reported), `CI-MISSING <head> <names>` (nothing failed or runs, but a required check has not
-  registered for M minutes, default 20), `OPEN after <H>h`, `ERROR …`.
+  registered for M minutes, default 20), `OPEN after <H>h`, `ERROR …` (exit 1; also when the profile's `required_checks` cannot be read — never read as green).
 - `watch-session.sh <transcript-folder-or-file> --quiet-min N` — the Manager's watch on a worker's
   transcript and its subagents': `SESSION LIMIT|ERROR|QUIET|GONE|OK …`, `ERROR …` (exit 2). Quiet
   counts from the later of the last write and the arming, so a re-arm gets a full window.
@@ -163,8 +162,7 @@ reads it. Format: `references/item.md`, "The report".
   `grep -c $'\r'`, which in Git Bash counts every line (2026-11-11).
 - **This skill's scripts may be running.** Change one only by writing a new file beside it and
   `mv` it into place.
-- **Reports to the user** are in the profile's language (Russian by default), short: the outcome
-  first, then numbers and a link. Quoted strings in these texts ("…") are the Russian defaults.
+- **Reports to the user** are in the user's language (the profile's `language` if set), short: the outcome first, then numbers and a link. Quoted strings in these texts ("…") are given in English; say them in the user's language.
 - **Project rules** that bind every role live in the profile's `rules_file`; every role reads it.
   A file outside your worktree (the plan, memory, `~/.lipok`) is written through Bash, since some
   projects' hooks block Write/Edit outside the worktree.

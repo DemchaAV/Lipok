@@ -17,7 +17,7 @@ Do not widen the item. Anything else you find goes into `P1:`, one line each.
 Shell state does not survive between Bash calls: start every call that needs them with
 
 ```bash
-SK="$HOME/.claude/skills/lipok/scripts"; A="python -I $SK/lipok.py"; ITEM=<WORK: from the brief>
+SK="$HOME/.claude/skills/lipok/scripts"; A="$(command -v python || command -v python3) -I $SK/lipok.py"; ITEM=<WORK: from the brief>
 ```
 
 plus the variables the item profile defines, and `set -a; . <ENV>; set +a` when the brief's
@@ -63,7 +63,7 @@ against GitHub: write what happened, never what should have happened.
 
 1. **Anchor.**
    1. Read the brief.
-   2. Write the report (`STATUS: WORKING`).
+   2. The report: on attempt 1, write it (`STATUS: WORKING`). On a later attempt (`CONTINUE` or `START AT` in the brief) it exists: read it first, keep its numbers and findings, and change only `STATUS: WORKING`, `KEY` and `TURN`.
    3. `git status --porcelain --untracked-files=all`. A file whose only change is line ends
       (`git diff --ignore-cr-at-eol --quiet -- <file>` exits 0) may be put back with
       `git restore -- <file>`. Anything else left from earlier: return `ITEM BLOCKED`. Never
@@ -163,11 +163,11 @@ The profile's `resources` are shared with other lanes and projects on this machi
 around the run that needs it, and release it right after, also on failure:
 
 ```bash
-$A lock acquire <resource> --holder <key>     # exit 4 = held by someone else
-$A lock release <resource> --holder <key>
+$A lock acquire <resource> --holder <key> --repo <repo>     # exit 4 = held by someone else
+$A lock release <resource> --holder <key> --repo <repo>
 ```
 
-Held → wait in the background: `until $A lock acquire <resource> --holder <key>; do sleep 60;
+Held → wait in the background: `until $A lock acquire <resource> --holder <key> --repo <repo>; do sleep 60;
 done`. Never break a lock. One build per tree at a time; do not edit sources while a build or a
 sabotage runs. Before you return, release every lock you hold and stop every background run you
 started (`TaskStop`), so the worker's tree is quiet.

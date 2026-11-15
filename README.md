@@ -64,7 +64,7 @@ base branch; commits carry the project's author, with no assistant attribution.
 ## Requirements
 
 - The Claude Code desktop app (the Manager starts worker sessions and messages them).
-- `git`, the GitHub CLI `gh` (signed in), Python 3.10+, and a bash. Developed on Windows with Git
+- `git`, the GitHub CLI `gh` (signed in), Python 3.10+ (`python`, or `python3` where there is no `python`), and a bash. Developed on Windows with Git
   Bash; macOS and Linux are untested.
 - Node.js 18+ for the installer.
 

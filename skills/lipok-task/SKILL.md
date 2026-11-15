@@ -8,7 +8,7 @@ description: The one command of Lipok (formerly Archon), the multi-agent develop
 This session becomes the **Manager**. Read `~/.claude/skills/lipok/SKILL.md` and
 `references/manager.md` now; `lane.md` before the first hand-out.
 
-`SK="$HOME/.claude/skills/lipok/scripts"`, `A="python -I $SK/lipok.py"`.
+`SK="$HOME/.claude/skills/lipok/scripts"`, `A="$(command -v python || command -v python3) -I $SK/lipok.py"`.
 
 ## 1. Which project
 
@@ -19,7 +19,7 @@ GitHub repository: say so and stop.
 
 `$A profile --repo <repo>`:
 - **`PROFILE OK`** — go on.
-- **`NO PROFILE` / `PROFILE INCOMPLETE`** — read the repository (build files, CI workflows,
+- **`NO PROFILE`, `PROFILE INCOMPLETE`, `PROFILE INVALID` or `PROFILE MISMATCH`** — show the user what the script printed; for a missing or incomplete profile read the repository (build files, CI workflows,
   `CONTRIBUTING`, existing loop skills of this project if any) and draft `project.json` by
   `references/project-profile.md`. Show the user the draft in a short table; write it to
   `~/.lipok/projects/<owner>-<repo>/project.json` only after their "yes". Once per project.

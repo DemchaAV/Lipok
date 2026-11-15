@@ -28,8 +28,9 @@ function run(cmd, args) {
 function skillsDir(args) {
   const i = args.indexOf("--dir");
   if (i >= 0) {
-    if (!args[i + 1]) throw new Error("--dir needs a folder");
-    return path.resolve(args[i + 1]);
+    const v = args[i + 1];
+    if (!v || v.startsWith("-")) throw new Error("--dir needs a folder");
+    return path.resolve(v);
   }
   return process.env.CLAUDE_SKILLS_DIR || path.join(os.homedir(), ".claude", "skills");
 }
@@ -47,16 +48,15 @@ function doctor() {
   else if (!run("gh", ["auth", "status"])) { bad("gh is not signed in — run: gh auth login"); good = false; }
   else ok(`${gh.split("\n")[0]}, signed in`);
 
-  // The skills call `python -I …`, so `python` itself must be Python 3.10+.
-  const py = run("python", ["-c", "import sys;print('%d.%d' % sys.version_info[:2])"]);
-  if (!py) {
-    bad("python — install Python 3.10+ so that `python` runs it" +
-        (run("python3", ["--version"]) ? " (python3 exists, but the skills call `python`)" : ""));
-    good = false;
-  } else {
+  // The skills run `python`, or `python3` where there is no `python` (macOS, Linux).
+  const ver = "import sys;print('%d.%d' % sys.version_info[:2])";
+  const pyName = ["python", "python3"].find((p) => run(p, ["-c", ver]));
+  if (!pyName) { bad("python — install Python 3.10+"); good = false; }
+  else {
+    const py = run(pyName, ["-c", ver]);
     const [maj, min] = py.split(".").map(Number);
-    if (maj > 3 || (maj === 3 && min >= 10)) ok(`python ${py}`);
-    else { bad(`python ${py} — need 3.10+`); good = false; }
+    if (maj > 3 || (maj === 3 && min >= 10)) ok(`${pyName} ${py}`);
+    else { bad(`${pyName} ${py} — need 3.10+`); good = false; }
   }
 
   // The scripts are bash. On Windows Claude Code runs them in Git Bash, not WSL.
@@ -86,14 +86,22 @@ function doctor() {
 
 function install(args) {
   const dest = skillsDir(args);
+  // Installing into the package's own skills folder would delete the source before copying it
+  // (2026-11-15 audit), and a folder inside it would copy into itself.
+  const own = path.resolve(ROOT, "skills");
+  const inside = (a, b) => { const r = path.relative(b, a); return r === "" || (!r.startsWith("..") && !path.isAbsolute(r)); };
+  if (inside(dest, own) || inside(own, dest)) throw new Error(`refusing to install into the package itself: ${dest}`);
   const ready = doctor();
   fs.mkdirSync(dest, { recursive: true });
   for (const s of SKILLS) {
     const src = path.join(ROOT, "skills", s);
     if (!fs.existsSync(path.join(src, "SKILL.md"))) throw new Error(`package is missing ${src}`);
     const to = path.join(dest, s);
+    const tmp = path.join(dest, `.${s}.installing-${process.pid}`);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.cpSync(src, tmp, { recursive: true });         // copy first: a failed copy leaves the old skill
     fs.rmSync(to, { recursive: true, force: true });  // only the folder we install
-    fs.cpSync(src, to, { recursive: true });
+    fs.renameSync(tmp, to);
     console.log(`installed ${to}`);
   }
   console.log("\nNext: open a project in the Claude Code app and type  /lipok-task <plan or task>");

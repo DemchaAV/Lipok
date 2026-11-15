@@ -23,12 +23,12 @@
 # --delay waits before the first read (after a rerun, until it registers).
 # --merge-only reports only MERGED/CLOSED (for a PR whose CI the app's Auto-fix already watches).
 # --once prints what it reads and exits (exit 1 if the read fails). --repo falls back to $LIPOK_REPO.
-# Required checks: --require "<name>;<name>", or else the profile's required_checks (read with
-# lipok.py beside this script; none when the repo has no profile). --every: seconds between reads
-# (default 180). All numbers are whole.
+# Required checks: --require "<name>;<name>" (or "none"), or else the profile's required_checks
+# (read with lipok.py beside this script; none when the repo has no profile; an unreadable profile
+# is an ERROR). --every: seconds between reads (default 180, at least 1). All numbers are whole.
 # Origin: an earlier single-loop harness (2026-10-25), with the repository made a parameter.
 set -u
-USAGE='usage: wait-pr.sh <pr> --repo <owner/name> [--hours H] [--delay S] [--skip "<head> <EVENT>"] [--merge-only] [--once]'
+USAGE='usage: wait-pr.sh <pr> --repo <owner/name> [--hours H] [--delay S] [--skip "<head> <EVENT>"] [--merge-only] [--once] [--require "a;b"|none] [--missing-min M] [--every S]'
 if [ $# -lt 1 ]; then echo "$USAGE"; exit 2; fi
 N=$1
 shift
@@ -48,22 +48,36 @@ int() { case "$2" in ''|*[!0-9]*) echo "usage: $1 needs a whole number, got '$2'
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) need "$1" "${2:-}"; REPO=$2; shift 2 ;;
-    --hours) need "$1" "${2:-}"; int "$1" "$2"; H=$2; shift 2 ;;
-    --delay) need "$1" "${2:-}"; int "$1" "$2"; DELAY=$2; shift 2 ;;
+    --hours) need "$1" "${2:-}"; int "$1" "$2"; H=$((10#$2)); shift 2 ;;
+    --delay) need "$1" "${2:-}"; int "$1" "$2"; DELAY=$((10#$2)); shift 2 ;;
     --skip) need "$1" "${2:-}"; SKIP=$2; shift 2 ;;
     --once) ONCE=1; shift ;;
     --merge-only) MERGE_ONLY=1; shift ;;
     --require) need "$1" "${2:-}"; REQUIRE=$2; REQUIRE_SET=1; shift 2 ;;
-    --missing-min) need "$1" "${2:-}"; int "$1" "$2"; MISSING_MIN=$2; shift 2 ;;
-    --every) need "$1" "${2:-}"; int "$1" "$2"; EVERY=$2; shift 2 ;;
+    --missing-min) need "$1" "${2:-}"; int "$1" "$2"; MISSING_MIN=$((10#$2)); shift 2 ;;
+    --every) need "$1" "${2:-}"; int "$1" "$2"; EVERY=$((10#$2)); shift 2 ;;
     *) echo "unknown argument: $1"; exit 2 ;;
   esac
 done
 if [ -z "$REPO" ]; then echo "ERROR no --repo and no LIPOK_REPO"; exit 2; fi
+# Numbers are read as decimal ($((10#…)) above): "09" used to be an invalid octal (2026-11-15).
+if [ "$EVERY" -lt 1 ]; then echo "usage: --every must be at least 1"; exit 2; fi
+[ "$REQUIRE" = "none" ] && REQUIRE=""
 if [ "$REQUIRE_SET" -eq 0 ]; then
+  # The profile's required checks. A profile that cannot be read is an error, never "none":
+  # a silent "none" turned a missing deploy check into CI-GREEN (2026-11-15 audit).
   HERE=$(dirname "$0")
-  if RC=$(python -I "$HERE/lipok.py" required-checks --repo "$REPO" 2>/dev/null); then
+  PYBIN=""
+  for P in python python3; do "$P" -c '' >/dev/null 2>&1 && { PYBIN=$P; break; }; done
+  if [ -z "$PYBIN" ]; then
+    echo "ERROR no python to read the profile's required_checks (or pass --require)"; exit 1
+  fi
+  RC=$("$PYBIN" -I "$HERE/lipok.py" required-checks --repo "$REPO" 2>&1); RCX=$?
+  if [ "$RCX" -eq 0 ]; then
     REQUIRE=$(printf '%s\n' "$RC" | tr -d '\r' | sed -e '/^$/d' -e 's/;/,/g' | paste -sd ';' -)
+  elif [ "$RCX" -ne 3 ]; then   # 3 = the repository has no profile: no required checks
+    echo "ERROR cannot read the required checks: $(printf '%s' "$RC" | tr '\n' ' ' | cut -c1-200)"
+    exit 1
   fi
 fi
 # The required names, one per element; a name's own ";" or "|" cannot be told apart, so both
