@@ -162,4 +162,8 @@ docs/design-history.md           how it got there
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Changes: [CHANGELOG.md](CHANGELOG.md).
 
+## License
+
+[MIT](LICENSE).
+
 Lipok was called Archon until 2026-11-15.

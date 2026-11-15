@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Multi-agent dev harness for Claude Code: one manager, parallel workers in their own worktrees, PRs you merge.",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "bin": {
     "lipok": "bin/lipok.js"
   },

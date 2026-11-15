@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- MIT license.
 - The user chooses the number of lanes before a task starts: `cut-check` prints a `LANES` line
   with the rounds each number of lanes takes, and the Manager asks with the fastest option first.
 - `lipok.py profile-set` and the `profile` phrase: change the project profile after the first run.
