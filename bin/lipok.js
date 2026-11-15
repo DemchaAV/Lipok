@@ -3,7 +3,7 @@
 //   npx github:DemchaAV/Lipok install      copy the skills into ~/.claude/skills (after a check)
 //   npx github:DemchaAV/Lipok doctor       only the check
 //   npx github:DemchaAV/Lipok uninstall    remove the two skill folders
-// No dependencies; works the same on Windows, macOS and Linux.
+// No dependencies. Written for Windows, macOS and Linux; CI runs it on Windows and Ubuntu.
 "use strict";
 
 const fs = require("fs");

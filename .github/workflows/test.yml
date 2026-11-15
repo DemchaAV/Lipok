@@ -1,0 +1,45 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Syntax
+        run: |
+          python -I -m py_compile skills/lipok/scripts/lipok.py skills/lipok/scripts/crlf-replace.py
+          bash -n skills/lipok/scripts/wait-pr.sh skills/lipok/scripts/watch-session.sh install.sh
+          node --check bin/lipok.js
+      - name: Script tests
+        run: |
+          if command -v cygpath >/dev/null 2>&1; then
+            # Windows: python wants C:\ paths; the test folder must be in C:/ form
+            PY=$(cygpath -w "$PWD/skills/lipok/scripts/lipok.py")
+            T=$(cygpath -m "$RUNNER_TEMP/lipok-tests")
+          else
+            PY="$PWD/skills/lipok/scripts/lipok.py"
+            T="$RUNNER_TEMP/lipok-tests"
+          fi
+          out=$(bash tests/run.sh "$PY" "$T" 2>&1); echo "$out"
+          echo "$out" | tail -1 | grep -q ' FAIL=0$'

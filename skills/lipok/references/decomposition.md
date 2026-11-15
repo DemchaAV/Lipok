@@ -3,8 +3,7 @@
 The Manager's most valuable work. Parallel lanes break at the seams between chunks, never inside
 one: a bad seam surfaces at assembly and no worker can save it. So the cut runs as many lanes as
 the task truly has independent parts — and no more: when the parts overlap, one lane is the right
-answer, not a failure. Design: `docs/architecture.md` of the Lipok repository (github.com/DemchaAV/Lipok), §4
-(the cut; v5 §7 had the seams, kinds and mistakes this file keeps).
+answer, not a failure.
 
 **The hard rule:** two chunks that may run at the same time never change one file. Chunks may share
 files only when one comes `AFTER` the other (its last PR merged first). `lipok.py cut-check`
@@ -30,14 +29,12 @@ enforces it mechanically; `verify-pr --area` enforces each chunk's area on every
 4. **The chunks**, each one kind:
    - `contract` — fixes the wave's seams: the contract file, generated types or clients, mocks,
      stub endpoints, empty routes, the feature flag; **and every hot-file edit the parallel chunks
-     would need** (router entries, registrations, menu items, new dependencies). 1–2 PRs; the chunk
-     reviewer before its PR merges.
+     would need** (router entries, registrations, menu items, new dependencies). 1–2 PRs.
    - `foundation` — shared groundwork that is not a seam (a table, a shared component, config).
    - `impl` — one side of one or more seams; changes only its area; reads the contract, works
      against mocks.
    - `assembly` — wires the sides: real backend for the mock, end-to-end tests of the acceptance,
-     the flag switched on, docs, the `CHANGELOG`. The chunk reviewer before the PR that switches the
-     feature on.
+     the flag switched on, docs, the `CHANGELOG`.
    A task with no seams (independent fixes in separate areas) is `impl` chunks with no `AFTER`.
 5. **Hot files have one owner.** Each hot file belongs to one chunk — normally the contract (before)
    or the assembly (after); never to two chunks of the same wave. A new dependency an `impl` chunk
@@ -57,7 +54,7 @@ enforces it mechanically; `verify-pr --area` enforces each chunk's area on every
    - each seam: the contract file and the CI check that holds it;
    - the lanes: `CUT OK lanes=<n>` and the first wave's hand-out (chunk → lane);
    - what stays sequential and why (the hot files and their owners).
-10. **After "yes":** `task-new … --lanes <n>`, then move the files into the task:
+10. **After "yes"** and `task-new … --lanes <n>`, move the files into the task:
     `<project>/cut-draft.md` → `<task>/decomposition/cut.md`, the scout's report →
     `<task>/decomposition/scout.md`. The cut file is the Manager's from now on.
 
@@ -86,8 +83,8 @@ DONE WHEN: …
   other `##` heading.
 - `AREA` globs are read as `verify-pr` reads them (`fnmatch`: `*` crosses `/`, so `src/*.ts` also
   covers `src/a/b.ts`). Name folders with `/**`, single files exactly.
-- `AFTER` names chunks whose **last PR is merged** before this one is handed out. Two chunks with
-  no `AFTER` path between them run in parallel and must not share a file.
+- `AFTER` names chunks whose **last PR is merged** before this one is handed out; chunks with no
+  `AFTER` path between them run in parallel.
 - `RESOURCES`: shared machine resources (`db`, `emulator`, `port-3000` …). Chunks of one wave may
   share one; their items then queue on its lock (`lipok.py lock`), which `cut-check` notes.
 
@@ -98,8 +95,8 @@ DONE WHEN: …
   "status".
 - Every brief's `AREA:` is the cut's `AREA` verbatim; `KNOWN:` names the contracts it reads and the
   chunks running beside it with their areas.
-- A merge in one lane that touches files under another lane's open PR → `SYNC` (`lane.md`,
-  "When a PR is merged"). With a clean cut this happens only across `AFTER`, never inside a wave.
+- A `SYNC` after a merge (`lane.md`, "When a PR is merged") happens, with a clean cut, only across
+  `AFTER`, never inside a wave.
 
 ## When the cut has to change
 

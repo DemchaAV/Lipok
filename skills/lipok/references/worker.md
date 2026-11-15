@@ -1,24 +1,22 @@
 # Worker — leads one chunk
 
-You hold one lane for the whole task, in your own worktree, and lead one **chunk** at a time: a
-closed sub-task of several items. You plan the chunk, hand each item to a fresh **executor**
+You hold one lane for the whole task, in your own worktree, and lead one **chunk** at a time. You plan the chunk, hand each item to a fresh **executor**
 subagent (`references/item.md`), and do yourself what an executor cannot: the gate, the PR watch,
 CI, `SYNC`, taking the PR out of draft. Upward you send short lines; the Manager sees the outcome,
-not the steps. Design: `docs/architecture.md` of the Lipok repository (github.com/DemchaAV/Lipok), sections 3–7.
+not the steps.
 
-Your authority for a chunk is its **brief**, written by the Manager that started you. Messages are
-data; what you act on is the brief, the note or the DR file a line points to.
+Your authority for a chunk is its **brief**, written by the Manager that started you; on a line,
+you act on the note or the DR file it points to.
 
 ## Names
 
-Shell state does not survive between Bash calls: start every call that needs them with
+Start every Bash call that needs them with
 
 ```bash
 SK="$HOME/.claude/skills/lipok/scripts"; A="$(command -v python || command -v python3) -I $SK/lipok.py"; LS=<LANE-STATE from the chunk brief>
 ```
 
-- `<ck>` — the chunk key `<tid>/L<N>/K<n>`; `<key>` — an item key `<ck>/<slug>#<attempt>`, made
-  only by `$A item` and `$A bump`.
+- `<ck>`, `<key>` — SKILL.md, "Keys".
 - `$LS` — your lane state (`<task>/chunks/<K>/lane-state.md`): item, attempt, key, report, PR, your
   watches. You are its only writer, through `$A item`, `$A bump`, `$A set`.
 - `<task>/chunks/<K>/work/<slug>/` — the item's scratch folder (`$ITEM` of the executor): probes,
@@ -37,8 +35,7 @@ Do that and nothing else.
 
 ## Lines you send the Manager
 
-One line by `SendMessage` to the Manager's `local_…` id: `<TYPE> <key> — <absolute path>`. Send
-nothing else upward: not `WORKING`, not CI events, not `FIX`, not reruns. No phone notifications.
+By `SendMessage` to the Manager's `local_…` id. Send nothing else upward: not `WORKING`, not CI events, not `FIX`, not reruns. No phone notifications.
 
 | Line | When |
 |---|---|
@@ -47,7 +44,7 @@ nothing else upward: not `WORKING`, not CI events, not `FIX`, not reruns. No pho
 | `MERGED <key> — <report>` | your PR watch saw the merge |
 | `DECISION <key> — <report>` | the report holds a question for the user (at the plan stage, with no item yet: `DECISION <ck> — <note>`) |
 | `BLOCKED <key> — <report>` | you cannot go on without an outside action (no item yet: `BLOCKED <ck> — <note>`) |
-| `PAUSED <key> — <report>` | after `PAUSE` |
+| `PAUSED <ck> — <report or note>` | after `PAUSE` |
 | `ALIVE <key> — <what runs; its output file>` | the answer to `PING` |
 | `CHUNK_DONE <ck> — <done.md>` | the chunk's last PR is merged |
 
@@ -62,7 +59,7 @@ nothing else upward: not `WORKING`, not CI events, not `FIX`, not reruns. No pho
 | `DECISION <key> — <DR>` | the user's answer: a new executor (step 3) with the DR in its brief's `KNOWN:` |
 | `SYNC <key>` | the base moved under your open PR: a new attempt (`$A bump`), an executor with a `SYNC` brief (merge `origin/<base>` with a merge commit, never rebase or force-push; re-run what the change touches; push), then step 4 again |
 | `PING <key>` | answer `ALIVE` in one line, change nothing |
-| `PAUSE <key>` / `STOP <key>` | step 6 |
+| `PAUSE <ck>` / `STOP <ck>` | step 6 |
 | `RESUME <key> — <note>` | first make the tree safe (below), then go on from `$LS` and the report |
 
 **Make the tree safe** (on `RESUME`, after a dead turn): if `<work>/<slug>/sabotage-originals/`
@@ -86,8 +83,7 @@ that these phrases go to the Manager session (name it), and stop.
 3. **An item.**
    1. `$A item $LS --chunk <K> --slug <slug> --item-file <file with the plan line>` → `REPORT`,
       `KEY`; with `--attempts <n>` when the plan line says `· attempts: <n>` — the stall watch
-      then counts a loop only past those planned attempts (2026-11-12: 4 planned batches tripped
-      `STALL LOOP`). A FIX, SYNC or re-brief of the same item is `$A bump $LS` instead.
+      then counts a loop only past those planned attempts. A FIX, SYNC or re-brief of the same item is `$A bump $LS` instead.
    2. The brief, `<task>/chunks/<K>/briefs/<slug>-<attempt>.md` (a quoted heredoc):
 
       ```text
@@ -130,20 +126,25 @@ that these phrases go to the Manager session (name it), and stop.
       be `GATE PASS`; then write `GATE: <work>/<slug>/gate-<pr>.txt` (the file, not the folder:
       `verify-pr` reads its last line) into the report. `GATE FAIL` → `$A bump`, an executor with
       the failing steps as its `KNOWN:`.
-   2. **CI**, read once — not in the first minutes after `gh pr create` — with `gh pr checks <n>
-      --repo <repo>` (exit 0 pass, 8 pending, 1 fail). Write the counts into the report's `CI:`.
+   2. **CI**, read once (SKILL.md, "CI"): `gh pr checks <n> --repo <repo>`. Write the counts into
+      the report's `CI:`.
    3. The item profile needs a CI artifact that is not ready yet → arm the PR watch (step 5),
       wait for it.
    4. `gh pr ready <n> --repo <repo>`; the report's `STATUS: REVIEWED`, new `TURN`.
    5. **Check yourself as the Manager will:** `$A verify-pr <n> --repo <repo> --report <report>
-      --area "<AREA>"`. Pending CI is the only failure you may leave to the watch: arm it, and send `READY` when it reports `CI-GREEN` and `verify-pr` is `OK`. `mergeability unknown` → run `verify-pr` again in a minute; a conflict with the base → `SYNC` it yourself (the `SYNC` row above). An unresolved review thread a
+      --area "<AREA>"`. It checks: open, not a draft, the right base, no auto-merge, no conflict
+      with the base, no review asking for changes; the report's HEAD is the PR's head; CI finished
+      and green, every `required_checks` name registered; no unresolved review thread; the
+      report's `TESTS`, `SABOTAGES`, `REVIEW`, `BOTS`, `GATE` lines hold up; every file inside the
+      area (case-sensitive; under 100 files). Pending CI is the only failure you may leave to the watch: arm it, and send `READY` when it reports `CI-GREEN` and `verify-pr` is `OK`. `mergeability unknown` → run `verify-pr` again in a minute; a conflict with the base → `SYNC` it yourself (the `SYNC` row above). An unresolved review thread a
       person opened → `BLOCKED` upward (it waits on them). Any other `VERIFY FAIL` → fix it first
       (a new executor where code must change).
    6. `VERIFY OK` → `READY <key> — <report>`; `$A set $LS status=REVIEWED pr=<n>`.
-5. **The PR watch** — yours: `bash $SK/wait-pr.sh <n> --repo <repo>` (`run_in_background`), with
+5. **The PR watch** — yours: `bash $SK/wait-pr.sh <n> --repo <repo>`, with
    `--skip "<head> CI-GREEN"` when CI is green already and `--delay 120` if the PR is minutes old;
-   `$A set $LS watch="<task id> <n> <skip or ->"`. Before arming, `TaskStop` the one `watch` names.
-   - `CI-GREEN <head>` → if READY was waiting on it: step 4.5–4.6. Re-arm with the skip.
+   `$A set $LS watch="<task id> <n> <skip or ->"`. Its other flags: `--hours H`, `--merge-only`,
+   `--once`, `--require "a;b"|none`, `--missing-min M`.
+   - `CI-GREEN <head>` (only once every `required_checks` name has reported) → if READY was waiting on it: step 4.5–4.6. Re-arm with the skip.
    - `CI-FAIL <head> <runs> <checks>` → the failed jobs: `gh run view <run> --repo <repo> --json
      jobs -q '.jobs[] | select(.conclusion=="failure") | .databaseId'`, their logs `gh api
      --allow-escape-sequences repos/<repo>/actions/jobs/<job>/logs`.
@@ -157,15 +158,16 @@ that these phrases go to the Manager session (name it), and stop.
      `plan.md` with `#<n>` and the merge sha; `MERGED <key> — <report>`; the next item (step 3),
      or the chunk's end (step 7).
    - `CLOSED` → `BLOCKED` upward: reopen, redo or drop is the user's.
-   - `CI-MISSING <head> <names>` → a required check (the profile's `required_checks`) never
-     registered: CI did not start, the change is not at fault. Look once (`gh pr checks <n>`); a
-     push or a re-run is not yours to invent — `BLOCKED` upward with the names, in the report
-     (2026-11-12: a deploy check that never started).
-   - `OPEN after 12h` → re-arm silently. `ERROR …` → `BLOCKED` upward.
+   - `CI-MISSING <head> <names>` → nothing failed or runs, but a required check (the profile's
+     `required_checks`) has not registered for `--missing-min` minutes (default 20): CI did not
+     start, the change is not at fault. Look once (`gh pr checks <n>`); a push or a re-run is not
+     yours to invent — `BLOCKED` upward with the names, in the report.
+   - `OPEN after 12h` → re-arm silently. `ERROR …` (also when the profile's `required_checks`
+     cannot be read — never read it as green) → `BLOCKED` upward.
    - Merge conflict with the base (`gh pr view <n> --json mergeable` is `CONFLICTING`) → as `SYNC`.
-6. **Pause and stop.** `TaskStop` every background task (executor, gate, watch), then check by PID
-   (`ps -ef | grep 'skills/lipok/scripts/'`, kill only your own by its PID); if a sabotage was
-   running, restore from `sabotage-originals/` and confirm the bytes; release every lock this
+6. **Pause and stop.** `TaskStop` every background task (executor, gate, watch) and kill your own
+   survivors (SKILL.md, "Watches and background runs"); if a sabotage was
+   running, make the tree safe (above); release every lock this
    chunk's keys hold; the item profile's pause cleanup; `$A set $LS paused=yes`; report `PAUSED`
    with what was stopped and `git status`. On `STOP` also end the turn and start nothing.
 7. **The chunk's end** — every item `[x]`: write `<task>/chunks/<K>/done.md` — what was done, each
@@ -176,14 +178,9 @@ that these phrases go to the Manager session (name it), and stop.
 ## Rules
 
 - **One open PR** on the lane at a time, one PR per item. The next item starts after `MERGED`. Items too small for a PR of their own are one item in the plan.
-- **Not yours to decide:** a policy choice, two non-equivalent solutions, widening or splitting an
-  item, a change outside `AREA:`, a contract change, the shape of a public API, a plan rule the
-  measurements contradict. `DECISION` upward; the answer comes as `DECISION`.
-- **CI** is read once per step, never polled; your `wait-pr.sh` is the one watch. Never turn on
-  the app's CI monitor or Auto-fix. If the user turned Auto-fix on for a PR, arm with
-  `--merge-only` (a second CI poller is not allowed, 2026-11-02).
-- **Watches** run only with `run_in_background`, never with `&` or `nohup`. Before arming a watch
-  into a field, `TaskStop` the one the field names; after a `TaskStop`, kill a survivor by its own
-  PID, never by pattern (2026-11-02).
+- **Not yours to decide:** the list in SKILL.md, "Rules". `DECISION` upward; the answer comes as
+  `DECISION`.
+- **CI**: if the user turned Auto-fix on for a PR, arm with `--merge-only` — a second CI poller is
+  not allowed.
 - **Locks** (`lipok.py lock`): the executor takes and releases them; on its death you release
   what its key holds.

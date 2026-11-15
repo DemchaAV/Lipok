@@ -1,289 +1,378 @@
-# Lipok — flat multi-agent development, v6
+# Lipok architecture
 
-> Renamed 2026-11-15: the harness used to be called **Archon** (the name is taken by another AI project), now it is **Lipok** — skills `lipok` and `lipok-task`, script `lipok.py`, state `~/.lipok`, lane branches `lipok-<tid>-l<N>`. References of the form "v5, section N" point to the previous design, which is not part of the repository.
+How Lipok works now. The skills (`lipok`, `lipok-task`) are the operational instructions; this
+document is the map.
 
-Date: 2026-11-11. Basis — v5 (`multi_agent_architecture_v5.md`); this document covers only what changes.
-Everything v6 does not name works as in v5: platform constraints (section 4), item statuses
-(section 11; `READY` is still set only by the Manager — after `verify-pr`), failures and
-recovery (section 19), project profile (section 16), the rules of section 23 — except 5 (in v6, one
-open PR per lane), 7 (the chunk is led by the worker, section 5) and 17 (the disposable contexts are now those of
-item executors, not workers; state still lives in files).
+## What Lipok is
 
-## 0. What changed versus v5
+Lipok is a multi-agent development harness for Claude Code. It takes a task too big for one
+session — a plan of many items — and runs it as **chunks** on parallel **lanes**. Each lane is a
+worker session in its own git worktree; every item ends as a pull request that a human merged.
+Lipok is two skills and a few scripts: no server, no daemon, no database. State is plain files
+under `~/.lipok`; sessions coordinate through one-line messages and background watches.
 
-| In v5 | In v6 | Why |
-|---|---|---|
-| Two schemes: flat and three-level | **One — flat.** Three-level is deferred (section 12) | The Supervisor relies on platform workarounds: the "start" phrase (v5 §4, 1a), the ban on clearing (3b), a "grandchild" does not wake the "grandparent" (3a); option "b" reduces it to a line relay |
-| The lane lead is the Manager: a brief and a clear for every item, CI triage, reconciliations | **The worker leads the chunk itself.** The Manager assigns the chunk and receives reports on the result | The Manager's context grew at the pace of the steps (under the old scheme three items produced a huge history of logs and reconciliations); the Manager did not survive to the end of the task |
-| Clean context per item — the worker's `clear_session` | **Clean context per item — a fresh subagent inside the worker** | Clearing is unreliable: on 2026-11-10 the classifier rejected clearing its own idle worker (v5 §4, row 2; session-clearing probes). A subagent starts on any turn (v5 §4, row 11) |
-| CI and merge are watched by the Manager (`wait-pr.sh`) | **The worker keeps its own PR watch**; the Manager checks the result with one script line (`verify-pr`) | CI logs, reruns and `SYNC` are execution details; they do not belong in the Manager's context |
-| A watch over the worker's transcript catches a dead turn | **Manager supervision** (section 3a): the same watch, plus a stall without a failure, an attempt loop, a silent idle, a report that does not match reality | When the worker leads the chunk itself, the Manager would otherwise not see a failure inside it |
-| The Manager is a planner and an assembler | **The Manager is the interface and the lead**: the big picture, the course, decisions, the merge queue | A worker with a clean context sees its chunk; only the Manager sees where it is heading relative to the whole project |
+The human keeps three things: approving the cut, answering decisions, and merging. **Nothing
+auto-merges.** No role merges, enables auto-merge or force-pushes, and a PR is called "ready to
+merge" only after a script has checked it against GitHub.
 
-## 1. Model
+## The overall flow
 
 ```text
-User ⇄ Manager — one window for the whole task; knows the project, the plan, the decisions, the lanes' progress
-                  │
-                  │  "Chat integration" → cut (approved by the user):
-                  │     K0  contract: chat API, message types          → first, merged before the rest
-                  │     K1  backend: storage, API, notifications (N items) → Worker A
-                  │     K2  frontend: screen, list, input (M items)      → Worker B
-                  │     K3  assembly: wire up, e2e, enable the feature   → whichever worker is free
-                  │
-                  ├── Worker A — its own worktree, leads chunk K1 itself
-                  │      item 1 → fresh subagent: measure, edit, tests, review, PR
-                  │      item 2 → fresh subagent …
-                  │      itself: PR watch, CI, conflicts with the base, gate
-                  │      upward: chunk plan · a line per item · PR ready · decision · block · chunk done
-                  │
-                  └── Worker B — the same for K2
+User ── /lipok-task <plan> ──▶ Manager session (the only one the user talks to)
+                                 │  scout ─▶ cut ─▶ cut-check ─▶ user says "yes"
+                                 │  task-new, deploy lanes
+                                 │
+          CHUNK / GO / REDIRECT / NOTE / DECISION / SYNC / PING / PAUSE / RESUME / STOP
+                                 │                                   ▲
+                                 ▼                                   │ LANE / PLAN / READY / MERGED /
+                ┌──────── Worker, lane 1 (own worktree) ─────────┐   │ DECISION / BLOCKED / PAUSED /
+                │  chunk plan ─▶ for each item:                  │   │ ALIVE / CHUNK_DONE
+                │     executor subagent (fresh context):         │───┘
+                │       measure, fix, tests, sabotages,          │
+                │       cold review, commit, draft PR            │
+                │     worker: gate, CI, out of draft, verify-pr  │
+                │     wait-pr.sh ─▶ MERGED ─▶ next item          │
+                └────────────────────────────────────────────────┘
+                ┌──────── Worker, lane 2 ... (same shape) ───────┐
+                └────────────────────────────────────────────────┘
+
+Manager's watches per lane: watch-session.sh (transcript), stall-check --watch (progress)
+User: approves the cut and answers decisions in the Manager session, merges PRs on GitHub
 ```
 
-The Manager as in real life: does not stand over your shoulder, but sees the big picture, reads short reports and
-says "wrong way, do it differently" in time. A worker works from its own vantage point — well, but
-narrowly; course corrections are the Manager's job.
+## Roles
 
-## 2. Roles
-
-| Role | What it is | Does | Does not |
+| Role | What it is | Owns | Never does |
 |---|---|---|---|
-| **User** | a human | sets the task, approves the cut and the contracts, answers decisions, merges | — |
-| **Manager** | the `/lipok-task` session | the cut; approving chunk plans; course corrections; supervision of the lanes' liveness and progress (section 3a); carrying facts between lanes; decisions with the user; checking ready PRs; the merge queue; chunk reviews; push to the phone; starts workers on the user's turn | does not write code; does not read CI logs, diffs or the worker's work in progress; does not merge |
-| **Worker** | a session in its own worktree, bound to a lane; leads one chunk at a time | the chunk plan; the loop over items via subagents; the watch of its own PR; CI triage; `SYNC`; the gate; reports | does not step outside its chunk and its code area; does not decide for the user; does not change the contract outside a contract chunk |
-| **Item executor** | the worker's subagent, one per item | the whole item from a clean context: measure, edit, tests, sabotages, cold review, commit, PR; writes the item report | does not take the next item; does not wait for CI for hours (that is the worker's job) |
-| **The scout** | the Manager's subagent | during the cut, reads the code: modules, layers, seams, shared files | does not decide the cut |
-| **Chunk reviewer** | the Manager's subagent | independent review of a contract chunk before the merge and of the assembly before the feature is enabled; optionally — of any chunk at the end | does not edit code |
+| **User** | a human | the task, approval of the cut, decisions outside a chunk's scope, every merge | — |
+| **Manager** | the session where the user typed `/lipok-task` | the cut; handing chunks to lanes; checking chunk plans against the whole picture; course corrections; carrying facts between lanes; decisions with the user; verifying what workers call ready; the merge queue; supervision; phone notifications | item work; reading diffs, CI logs, whole reports or worker transcripts; merging |
+| **Worker** | a session the Manager starts, one per lane, in its own worktree, kept for the whole task | one chunk at a time: its plan, its items, the gate, the PR watch, CI triage, `SYNC`, taking PRs out of draft | leaving its chunk's area; deciding for the user; changing a contract outside a contract chunk; talking to other workers |
+| **Executor** | a subagent of the worker, one per item attempt, fresh context | one item from its brief to a reviewed draft PR, and the item report | the next item; waiting for CI; `gh pr ready`; messaging any session; asking the user |
+| **Scout** | a read-only `Explore` subagent of the Manager | mapping the code for the cut | deciding the cut |
+| **Chunk reviewer** | a `general-purpose` subagent of the Manager | an independent review of contract and assembly chunks, and any chunk the user names, from the brief, `done.md` and the PRs' diffs; verdict in `reviews/GR-NNN.md` | editing code; seeing the worker's reasoning |
 
-## 3. How the Manager sees that a worker is heading the wrong way
+One principle drives the split: **the Manager sees outcomes, not steps.** It must hold the whole
+task in one context, so it reads only short artifacts — a chunk plan once, one note line per PR,
+one script line, a watch's last line. Whatever grows with the work stays with the worker, which in
+turn gives every item to a fresh executor that starts from a brief, not from history.
 
-The Manager does not follow the steps, but has five points where it sees the course, and each costs a line or two
-of context.
-
-1. **The chunk plan before the first item.** The worker has received a chunk, read the code of its area and writes
-   the chunk plan: items, order, what each changes, which contracts it reads. It sends `PLAN`. The Manager
-   checks it against the big picture — other chunks, contracts, `DR` decisions, acceptance criteria — and answers
-   `GO` or `REDIRECT` with a note. The cheapest course correction is the one made before code is written.
-2. **A line per item.** Every merged or ready item gives one `<note_field>:` line (by default `PLAN-NOTE:`) — what the PR does
-   and what was measured. The Manager reads only that line and notices a mismatch: "the frontend expects a `sentAt` field,
-   but the backend named it `createdAt` in item 4".
-3. **Checking the result with a script.** The "PR ready" line is checked with one command
-   (`lipok.py verify-pr`): not a draft, the report's HEAD is the PR head, CI is green on that SHA, review
-   has no open Blocker/Critical/Major. The script prints one line. "Ready to merge" stays
-   true and does not clutter the context. Past cycles showed why this cannot be skipped: false
-   claims in green code (2026-10: four review rounds, eight Majors), a refuted root cause
-   that survived into the CHANGELOG (2026-10-30).
-4. **Chunk review.** At the end of the contract chunk (before the merge) and of the assembly (before the feature is enabled) the Manager
-   launches an independent reviewer; for the other chunks — at the user's wish. The worker
-   looks at its own code for twenty items — a fresh look has to come from outside.
-5. **Carrying between lanes.** A fact from lane A that concerns lane B (the contract changed,
-   a shared bug was found, a user decision), the Manager passes on as a `NOTE <key> — <file>` line.
-   Workers do not know about each other; only the Manager connects them.
-
-A course correction is `REDIRECT <key> — <note>`: what is wrong relative to the big picture and how it
-should be. If the correction changes the scope or a contract, it is not a `REDIRECT` but a user decision
-(v5, section 13).
-
-## 3a. Supervision: is the worker alive and is the work moving
-
-The Manager does not read *how* the worker works, but always knows *that* it is alive, moving and not lying
-about the result. All of this is done by scripts with a one-line outcome; only the outcome gets into the Manager's
-context. A worker's silence is also an event: it is caught by a watch, not by the Manager waiting.
-
-### What is caught and by what
-
-| What happened | How we notice | Manager's response |
-|---|---|---|
-| **The turn died** on an API or model error | the `watch-session.sh` watch over the worker's transcript → `SESSION ERROR` | `RESUME` "continue from the report" (a new attempt, if needed, is made by the worker), a line to the user. A second death on the same item with no line from the worker in between (`death-turn` = item key) → switch the model; push |
-| **Usage limit** | `SESSION LIMIT` | not a dead turn: a timer until the reset + 5 minutes, one push with the time, then `RESUME` |
-| **Silence**: nothing is written for longer than the window (`quiet_window_min`) | `SESSION QUIET` — counts subagent transcripts too, so an item executor at work does not cause a false silence | looks at facts, not words: the turn is running; `lane-state` names a live wait — the PR watch (`watch`: CI or merge) or the gate (`gate-run`, its output is growing); the worker is waiting on a lock. If so → re-arm silently. Otherwise → `PING`, answered with one `ALIVE` line; no answer within the window → treat as a dead turn |
-| **Silent idle**: the turn ended, but there is no line upward | `SESSION QUIET`: no turn is running, `lane-state` names no wait (`watch`, `gate-run` — `none`), the item is neither merged nor ready, and there has been no line upward since the last `turn` | `RESUME` "report and a line upward"; twice in a row → a line to the user: the worker is losing the protocol |
-| **The session is gone** (closed, archived, deleted) | `SESSION GONE` or `get_session` → not found | push and a card: a new session can only be started on the user's turn. The new worker continues from the report, the branch and the PR; uncommitted work is lost — say so |
-| **Stall without a failure**: the worker is alive, but the chunk is not moving | the progress timer (`lipok.py stall-check`): more than the profile's `progress_window_h` has passed since the last progress line (`PLAN`, `READY`, `MERGED`, `CHUNK_DONE` — the `progress-line` field; an `ALIVE` answer does not count as progress); waiting for a READY PR to be merged and for a user decision is not a stall (`STALL IDLE`) | an `ALIVE` request; the answer shows where it stands. Fixing the same thing over and over → a course correction (`REDIRECT`) or a user decision |
-| **Loop**: the item goes in circles, the attempt count grows | `lipok.py stall-check`: the item's attempt exceeds `max_attempts` (3 by default) beyond the acknowledged one (`loop-ack`) | `PAUSE` the item, to the user — a report and what was tried, push. The user said to continue → `loop-ack=<key>`, the next alarm — after `max_attempts` attempts |
-| **Report does not match reality**: "done", but the PR is a draft, CI is red, there was no review | `lipok.py verify-pr` (below) | not `READY`; `REDIRECT` with the mismatch, one line per check item |
-| **Out of bounds**: the PR touches someone else's area, a push to the base branch, force-push, auto-merge | `verify-pr`: the PR's files against the chunk area; branch, history, auto-merge setting | stop the item; `REDIRECT` or `BLOCKED`, to the user |
-
-### What `verify-pr` confirms — before the words "ready to merge"
-
-It checks GitHub and files, not the words of the report; it prints `VERIFY OK <pr> <sha>` or
-`VERIFY FAIL <pr> <what is wrong>`.
-
-- The PR is not a draft, the base is the project's base branch, the report's HEAD is the PR head.
-- **CI**: all checks for this SHA have finished, none has failed.
-- **Review**: the item report names the cold review rounds and the outcome of the last one — without
-  Blocker/Critical/Major; the PR has no unresolved review threads; bot and CodeQL comments
-  have been read (an answer or a fix for each).
-- **Gate**: the report names the gate file; its last line is `GATE PASS`, and it is newer than the HEAD commit.
-- **Tests and sabotages**: the report names the number of tests (not zero) and of sabotages, and how many were caught
-  by real test failures; the code changed but there are zero sabotages → not ready.
-- **Area**: all the PR's files are within the chunk area from the brief.
-
-### Manager watches
-
-Per worker — one `watch-session.sh` watch (the transcript and its subagents) and one progress
-timer. The PR watch is kept by the worker; if the worker dies, its watch dies too, so on `RESUME` or
-replacement the Manager first reconciles the PR with GitHub (as in v5 "Reconciliation after a restart"). After sleep
-or a reboot all watches are gone — "resume" re-arms them.
-
-**Push to the user** from supervision: the session is gone; a second dead turn on the same step; the limit (with
-the reset time); a loop or `BLOCKED`; the chunk is stuck and the worker does not answer `ALIVE`.
-
-**"status"** for each lane: alive / turn running / idle and since when; the last line
-upward and its time; chunk, item, attempt; the PR and its CI; what is waiting on the user.
-
-## 4. Cut
-
-As in v5 (section 7), with two refinements.
-
-- **We cut by code areas, not by item numbers.** Each chunk has its own area of files;
-  two lanes do not edit the same file. A shared seam (API, types, data schema) is a separate small
-  contract chunk, merged first; the others only read it.
-- **A chunk is a closed subtask**: after its last PR the base builds and works, the feature may
-  be disabled. Size — from a few to ~20 items.
-
-The cut is proposed by the Manager (with the scout) and approved by the user. It is the most valuable work of the
-Manager: a bad seam will surface at the assembly, and no worker will save it.
-
-## 5. The worker's loop over a chunk
+## Units of work
 
 ```text
-The worker receives CHUNK <chunk key> — <chunk brief>
-   1. reads the brief, the code area, the contracts; writes the chunk plan chunks/<K>/plan.md
-   2. PLAN <chunk key> — <plan.md>; waits for GO or REDIRECT
-   3. for each item of the chunk plan:
-        a. item brief -> chunks/<K>/briefs/<slug>-<attempt>.md
-        b. executor subagent (fresh context) per the brief: measure -> edit -> tests -> sabotages
-           -> cold review -> commit -> draft PR -> item report
-        c. the worker itself: reconciles the report with GitHub; gate (in the background); PR watch (wait-pr.sh, in the background);
-           CI failed because of the change -> a new subagent with a note (FIX); infrastructure ->
-           rerun once
-        d. all green -> remove draft status -> READY <key> — <report> to the Manager
-        e. MERGED (its own watch) -> mark it in the chunk plan -> next item
-           the base moved under an open PR -> SYNC itself (merge commit, no rebase)
-   4. last item merged -> CHUNK_DONE <chunk key> — <summary report>
+task ──▶ chunks (contract | foundation | impl | assembly) ──▶ items ──▶ one PR per item
 ```
 
-- **One open PR per lane**, until it has been measured that the pipeline pays off (v5, section 10,
-  "Pipeline").
-- **Chunk summary report** (`chunks/<K>/done.md`): what was done, PRs with links, decisions, what remains
-  or was found outside the chunk (`P1:`), what changed in the contracts. The Manager retells it to the user
-  in three to five lines.
-- **Decision** — as in v5: the worker writes `DECISION` with options, the recommended one first, and waits.
-  A subagent does not make decisions: it stops and returns the question to the worker.
+- A **task** is one plan run through Lipok; a project has at most one active task.
+- A **chunk** is a closed sub-task of 2–6 items: after its last PR merges, the base builds and
+  works (a new feature may still be switched off). It has an `AREA` (the files it may change) and
+  an `AFTER` (chunks whose last PR must merge before it is handed out). Kinds:
+  `contract` fixes the seams between parallel chunks (the contract file, generated types, mocks,
+  stubs, the feature flag, and every hot-file edit the wave will need); `foundation` lays shared
+  groundwork that is not a seam; `impl` builds one side of a seam inside its own area;
+  `assembly` wires the sides together, switches the feature on, and owns docs and `CHANGELOG`.
+- An **item** is one plan line and becomes one PR.
+- A **wave** is a set of chunks with no `AFTER` path between them; they run at the same time.
 
-## 6. Messages
+**Keys** name every unit so a late message can be recognised. The chunk key `<ck>` is
+`<tid>/L<N>/<K>` (task id, lane, chunk), made by `lipok.py chunk`; the item key `<key>` is
+`<ck>/<slug>#<attempt>`, made by `lipok.py item` and `lipok.py bump`, never by hand. The attempt grows with every new
+executor brief for the same item — a fix, a `SYNC`, a resume after a dead turn — so a line or
+report carrying an older key is late and is ignored.
 
-One line `<TYPE> <key> — <path>` by `local_…` id, as in v5 (section 12). Item key —
-`<task>/<lane>/<chunk>/<slug>#<attempt>`, chunk key — `<task>/<lane>/<chunk>`.
+## The cut
 
-| From → To | Type | Meaning |
-|---|---|---|
-| Manager → worker | `CHUNK` | a new chunk; path of the chunk brief |
-| | `GO` / `REDIRECT` | chunk plan accepted / course correction with a note |
-| | `NOTE` | a fact from another lane or from the user; path of the note |
-| | `DECISION` | a user decision; `DR` path |
-| | `SYNC` | the base moved under an open PR, files overlap with someone else's merge |
-| | `PING` | supervision: answer with one `ALIVE` line |
-| | `PAUSE`, `RESUME`, `STOP` | as in v5 |
-| Worker → Manager | `LANE` | first turn: the transcript folder |
-| | `PLAN` | the chunk plan for approval |
-| | `READY` | the item's PR is out of draft, the worker's own `verify-pr` is OK; path of the report |
-| | `MERGED` | the worker's own watch saw the merge; path of the report |
-| | `DECISION`, `BLOCKED` | the user is needed; path of the report |
-| | `PAUSED` | stopped on `PAUSE` |
-| | `CHUNK_DONE` | the chunk is closed; path of the summary report |
-| | `ALIVE` | answer to `PING`: one line, what is running and where its output is |
-| Worker ↔ executor | — | the executor is a subagent: a brief on input, an `ITEM DONE / COMMITTED / DECISION / BLOCKED` answer on output |
+Parallel lanes break at the seams between chunks, never inside one, and a bad seam surfaces only
+at assembly, where no worker can save it. The cut is therefore the Manager's most valuable work.
 
-What does **not** go upward: `WORKING` on every turn, CI events, `FIX`, `SYNC`, reruns — these are the
-worker's internal business. Every event upward is an explicit line (v5 §4, row 3c).
+**The hard rule: two chunks of one wave never change the same file.** Chunks may share files only
+when one comes `AFTER` the other. This removes merge conflicts between lanes by construction
+rather than by care.
 
-## 7. State
+1. A **scout** maps the main checkout: the modules the plan touches, existing seams, **hot files**
+   (central registries, route tables, `index` re-exports, schemas and migrations, `package.json`
+   and lockfiles, i18n files, `CHANGELOG`, snapshots, CI config), shared resources, and the files
+   each item will likely change.
+2. Each seam between parallel parts gets a **contract**: a file in the repository that CI checks
+   from both sides — a schema with a test, a shared types module, a migration run from scratch. A
+   seam described only in a brief is not a contract, and its two sides may not run in parallel.
+3. **Each hot file has one owner**, normally the contract chunk (before the wave) or the assembly
+   (after it). A dependency an `impl` chunk discovers later is a decision that lands through the
+   owner, never a quiet lockfile edit.
+4. The cut is written to `cut-draft.md`, one `## K<n> <kind> — <title>` heading per chunk with
+   `AREA`, `AFTER`, `ITEMS`, `RESOURCES`, `DONE WHEN` and, for contracts, `SEAMS`.
+5. `lipok.py cut-check` enforces the rule: chunks not ordered by `AFTER` may not share a file (from
+   the main checkout's `git ls-files`) nor overlapping `AREA` globs; `AFTER` must name real chunks
+   with no cycle; each item sits in one chunk. It prints `CUT OK lanes=<n>` — the widest wave,
+   capped by the profile's `max_lanes` — or `CUT FAIL <reasons>`. A failing cut is never handed out.
+6. The user sees the chunks, waves, areas, seams with their CI checks, lanes, and what stays
+   sequential; the task starts only after their "yes".
 
-As in v5 (section 16) with the step 1 amendments (`lipok.py`, `task.json`). Writers:
+**One lane is often the right answer**: when the widest wave is 1, a side of a seam would get
+fewer than two items, the areas cannot be separated without a check the project lacks, or the task
+is a day's work.
+The cut changes later only through the user: a decision record, an edited cut, `cut-check` again,
+and a `REDIRECT` or `NOTE` to the lanes affected.
+
+## Messages between sessions
+
+Sessions exchange **one line**, addressed by `local_…` id: `<TYPE> <key> — <absolute path>`, or
+`<TYPE> <key>` without a file; anything longer goes into the file. Every event is an explicit line:
+the app wakes a parent session only when all its children are idle.
+
+**Worker → Manager**
+
+| Line | Meaning |
+|---|---|
+| `LANE <N> <folder>` | first turn only: the worker is up; `<folder>` holds its transcript |
+| `PLAN <ck> — <plan.md>` | the chunk plan is written; waiting for `GO` or `REDIRECT` |
+| `READY <key> — <report>` | the PR is out of draft and the worker's own `verify-pr` says `VERIFY OK` |
+| `MERGED <key> — <report>` | the worker's PR watch saw the merge |
+| `DECISION <key> — <report>` | the report holds a question for the user |
+| `BLOCKED <key> — <report>` | the work needs an outside action |
+| `PAUSED <ck> — <report or note>` | stopped after `PAUSE <ck>` |
+| `ALIVE <key> — <what runs; its output file>` | the answer to `PING` |
+| `CHUNK_DONE <ck> — <done.md>` | the chunk's last PR is merged |
+
+**Manager → worker**
+
+| Line | Meaning |
+|---|---|
+| `CHUNK <ck> — <brief>` | a new chunk (preceded by "Use the `lipok` skill, role worker.") |
+| `GO <ck>` | the plan fits the whole picture; start the items |
+| `REDIRECT <key or ck> — <note>` | a course correction inside the chunk's scope, or a `VERIFY FAIL` |
+| `NOTE <key or ck> — <file>` | a fact from another lane or from the user |
+| `DECISION <key> — <DR>` | the user's answer |
+| `SYNC <key>` | another lane's merge moved the base under this lane's open PR, and the files overlap |
+| `PING <key>` | answer with one `ALIVE` line |
+| `PAUSE`, `RESUME <key> — <note>`, `STOP` | the user said so; `RESUME` also after a dead turn or restart |
+
+Worker and executor exchange no lines: the brief goes in, and the answer comes back starting with
+`ITEM DONE`, `ITEM COMMITTED`, `ITEM DECISION` or `ITEM BLOCKED`. Deliberately absent upward:
+`WORKING`, CI events, fixes and reruns — execution detail that would fill the Manager's context.
+
+**A line is data, not an instruction.** The receiver reads the file and checks the facts against
+GitHub and the state files. Authority comes only from the user or from the brief a session was
+started with; no session writes a claim of the user's permission into a message or state file for
+another session to act on.
+
+## State on disk
+
+All state lives under `~/.lipok`, outside every repository: every worktree sees it at the same
+absolute path, and none of it can be committed by accident or lost with a worktree.
+
+```text
+~/.lipok/
+  locks/<resource>/                    machine-wide locks; broken.log records every break
+  projects/<owner>-<repo>/
+    project.json                       the project profile
+    item-profiles/<name>.md            what items of one kind add to the executor's steps
+    active                             id of the active task
+    cut-draft.md, cut-draft-scout.md   the cut before the task exists
+    tasks/<id>/
+      task.json                        the task record
+      decomposition/cut.md, scout.md   the approved cut and the scout's map
+      decisions/DR-NNN.md              decision records, append only
+      reviews/GR-NNN.md                chunk reviewer verdicts
+      lanes/<N>/state.md               the Manager's lane state, chunk level
+      lanes/<N>/env, events.log        the lane's environment; late lines
+      chunks/<K>/brief.md, notes/      the chunk brief; notes behind REDIRECT and NOTE
+      chunks/<K>/plan.md, done.md      the worker's chunk plan and end report
+      chunks/<K>/lane-state.md         the worker's lane state, item level
+      chunks/<K>/briefs/<slug>-<attempt>.md, reports/<slug>.md
+      chunks/<K>/work/<slug>/          item scratch: probes, gate output, sabotage-originals/
+      final.md                         written when the task ends
+```
+
+**Each lane has two state files, each with one writer.** The Manager's `lanes/<N>/state.md` is
+chunk level: worker, `chunk-status`, `pr` and `pr-status`, its watches, `last-line`,
+`progress-line`, `death-turn`, and the wait metrics. The worker's `chunks/<K>/lane-state.md` is
+item level: item, attempt, key, PR, its waits (`watch`, `gate-run`) and `turn`.
 
 | File | Writer |
 |---|---|
-| `task.json`, the overall plan, `decisions/DR-NNN.md`, `chunks/<K>/brief.md`, `reviews/` | Manager |
-| `lanes/<N>/state.md` — chunk level: worker, chunk, chunk status, open PR, pause | Manager |
-| `chunks/<K>/plan.md`, `briefs/`, `done.md`, `chunks/<K>/lane-state.md` — item level: key, attempt, watches, `last-turn`, `booked`, `rerun` | worker |
-| `chunks/<K>/reports/<slug>.md` | executor subagent (via the worker) |
+| `task.json` (`lipok.py task-set`), the task's plan, `brief.md`, `notes/`, `decisions/` | Manager (the worker adds plan-stage decision notes to `notes/`) |
+| `lanes/<N>/state.md` (`chunk`, `line`, `verify-pr --lane`, `book`, `set`) | Manager |
+| `plan.md`, `lane-state.md` (`item`, `bump`, `set`), `briefs/`, `done.md` | worker |
+| `reports/<slug>.md` | executor; the worker adds `GATE`, `CI`, `STATUS: REVIEWED` |
+| `reviews/GR-NNN.md` | chunk reviewer |
 
-Item state moves from the Manager's file to the worker's file: this is exactly "not following the steps".
+Writers of one file are serialised by a lock; `lipok.py set` refuses unknown keys. Every event
+starts by reading these files, so a compacted context loses nothing.
 
-## 8. The Manager's context — what it reads
+## Lifecycle of a chunk
 
-| Reads | Does not read |
+1. **Hand-out.** A free lane (`chunk-status` `none`, `DONE` or `DROPPED`) takes the lowest-numbered
+   chunk not yet handed out whose `AFTER` chunks are all done. `lipok.py chunk` makes the chunk
+   key, its folders and the worker's `lane-state.md`, and sets `chunk-status` to `BRIEFED`. The Manager
+   marks the items `[~]` in the task's plan, writes the brief (items verbatim, the cut's `AREA:`,
+   `CONTRACTS:`, `KNOWN:` facts and decisions, `DONE WHEN:`), sends `CHUNK` and arms its watches.
+2. **Plan.** The worker reads the brief and its area's code and writes `plan.md`: a `## Progress`
+   checklist, one line per item with the paths it touches, its dependencies, its contracts and,
+   for an item run in planned batches, `· attempts: <n>`. It sends `PLAN`.
+3. **Plan check.** The Manager reads the plan once against the other chunks, the contracts, the
+   decisions and the task's acceptance, and answers `GO` or `REDIRECT`; a fix that needs a change
+   of scope, a contract or the cut goes to the user. It is the cheapest correction: no code exists
+   yet.
+4. **Items**, one at a time, one open PR per lane.
+5. **End.** With every item `[x]`, the worker writes `done.md` — PRs with merge shas, decisions,
+   contract changes, `P1:` findings outside the chunk, numbers — and sends `CHUNK_DONE`. The
+   Manager sets `chunk-status=DONE`, tells the user in a few lines, and hands out the next chunk or
+   ends the task.
+
+## Lifecycle of an item
+
+1. **Brief.** `lipok.py item` starts the item at attempt 1 and prints its `KEY` and `REPORT`. The
+   worker writes `briefs/<slug>-<attempt>.md` and starts the executor in the background.
+2. **Executor.** It **measures** the item's premise first (a refuted premise is a decision);
+   **fixes** by one general rule inside `AREA:`; writes positive and negative **tests**; runs
+   **sabotages** (a script breaks each rule once; a real test must fail; files must be
+   byte-identical afterwards); runs the owning modules' tests (`module_tests`); gets a **cold
+   review** from a fresh subagent at the `review_skill` bar; commits as the profile's `author`;
+   opens a **draft** PR; and reviews the PR again until a round finds no Blocker, Critical or
+   Major. It answers bot comments, keeps the report current, and returns `ITEM DONE`.
+3. **Gate.** The worker runs the profile's `gate` in the background on the final tree; the output's
+   last line must be `GATE PASS`, and the file goes into the report's `GATE:`. With
+   `gate_when: before_push`, the executor commits without pushing (`ITEM COMMITTED`), the worker
+   gates that commit, and a new executor (`START AT: 9.4`) pushes and opens the PR.
+4. **CI**, read once with `gh pr checks`; pending CI is left to the PR watch.
+5. **Out of draft**: `gh pr ready`, report `STATUS: REVIEWED`.
+6. **Self-check**: the worker runs `verify-pr` as the Manager will, and sends `READY` on `VERIFY OK`.
+7. **Verification.** The Manager runs `verify-pr --lane`. `VERIFY OK` sets `pr-status=READY`, marks
+   the item `[>]`, queues the PR and notifies the user — only now is it "ready to merge".
+   `VERIFY FAIL` sets `pr-status=REDIRECTED` and returns as a `REDIRECT` with every failing point.
+8. **Merge.** The user merges. The worker's `wait-pr.sh` prints `MERGED <sha>`; the worker marks
+   the item `[x]` and sends `MERGED`. The Manager's `lipok.py book` confirms the merge on GitHub
+   (`BOOKED <pr> <sha> <date>`, `ALREADY BOOKED` or `NOT MERGED`), marks the task's plan, and sends
+   `SYNC` to any other lane whose open PR touches the same files.
+
+A red gate, a CI failure caused by the change, or a `SYNC` loops back as a new attempt
+(`lipok.py bump`) and a new executor. A CI failure matching the profile's `infra_failures` is
+re-run once; a second on the same head is `BLOCKED`. An executor that gives no answer, or one its
+report does not back, gets a new attempt; the third that ends the same way is `BLOCKED`. A `SYNC`
+merges `origin/<base>` with a merge commit, never a rebase.
+
+## Verification
+
+`lipok.py verify-pr <pr> --repo R --report F --area "<globs>"` checks GitHub and files, not the
+report's words, and prints `VERIFY OK <pr> <sha>` or `VERIFY FAIL <pr>: <every failing point>`:
+
+- the PR is open, not a draft, on `base_branch`, with no auto-merge, no conflict with the base and
+  no review requesting changes (`mergeability unknown`: run it again in a minute);
+- the report's `HEAD` is the PR's head;
+- all CI checks finished, none failed, and every `required_checks` name registered — a check that
+  never started does not pass as green;
+- no unresolved review thread;
+- the report holds up: `STATUS: REVIEWED`; `TESTS` non-zero with none failed; `REVIEW` with at
+  least one round and no open Blocker, Critical or Major; `BOTS` all answered; `SABOTAGES` all
+  caught, at least one, when code changed (unless the profile sets `sabotages` to `false`); the
+  `note_field` line (default `PLAN-NOTE`);
+- `GATE` names a file ending `GATE PASS` and newer than the PR's last commit;
+- every file of the PR is inside the area (under 100 files, so the list is complete).
+
+A report can be wrong in good faith; the script checks what it claims. The worker runs the same
+check before `READY`, so a `VERIFY FAIL` at the Manager is rare and meaningful.
+
+## Supervision
+
+Nothing a worker does inside a chunk reaches the Manager except its lines, so silence must be
+caught by a watch, not by waiting. Three watches run with `run_in_background`, so their exit wakes
+the session that armed them; each prints one line.
+
+| Watch | Whose | Detects |
+|---|---|---|
+| `wait-pr.sh <pr> --repo R` | the worker's, per open PR | `MERGED <sha>`, `CLOSED`, `CI-GREEN <head>` (once every required check reported), `CI-FAIL <head> <runs> <checks>`, `CI-MISSING <head> <names>`, `OPEN after <H>h`, `ERROR` |
+| `watch-session.sh <worker-dir> --quiet-min N` | the Manager's, per lane | over the worker's transcript and its subagents': `SESSION LIMIT`, `SESSION ERROR`, `SESSION QUIET`, `SESSION GONE`, `SESSION OK` |
+| `lipok.py stall-check --watch` | the Manager's, per lane | `STALL QUIET` (no progress line — `PLAN`, `READY`, `MERGED`, `CHUNK_DONE` — for `progress_window_h`), `STALL LOOP <key>` (past the planned attempts plus `max_attempts - 1` retries), `STALL IDLE` (paused, done, or waiting on the Manager or the user) |
+
+The PR watch is the only CI poller; nobody else reads CI repeatedly or turns on the app's CI monitor.
+
+**Waiting is not idling.** A worker waiting on its PR watch or gate names the wait in its lane
+state (`watch`, `gate-run`); a lane waiting on the user (a plan, a decision, a READY PR) is waiting
+too. The Manager checks these facts and `get_session` before reacting. What it must catch is the
+**silent idle**: the worker is not running, names no wait, holds an unfinished item, and has sent
+nothing.
+
+| Signal | Manager's response |
 |---|---|
-| the chunk brief and summary report; the chunk plan (once); the item's `<note_field>:` line; one `verify-pr` line; the outcome lines of watches and `stall-check`; `DECISION` questions; the chunk reviewer's verdict | diffs; CI logs; the full item report (only on `DECISION`/`BLOCKED` or if the line raised a doubt); worker transcripts |
+| `SESSION LIMIT` | a usage limit, not a failure: a timer until the reset, then `RESUME` |
+| `SESSION ERROR` | the turn died on the model: `RESUME` with a note; a second death on the same item (`death-turn`) switches the worker's model (`set_session_model`) and tells the user |
+| `SESSION QUIET` with a running turn or a live wait | re-arm silently |
+| `SESSION QUIET`, silent idle | `RESUME` asking for the report and a line; twice in a row, tell the user |
+| `SESSION QUIET` otherwise; `STALL QUIET` | `PING`; no `ALIVE` before the next stall line → a dead turn |
+| `SESSION GONE` | replace the worker |
+| `STALL LOOP` | `PAUSE <ck>` and tell the user; if they say go on, `loop-ack=<key>` and `RESUME` |
+| `ALIVE` | read against the facts; the same fix over and over, or work outside the chunk → `REDIRECT` or a decision |
 
-Budget: a task of 120 items in 6 chunks — about 6 chunk plans, 6 summary reports and 120 lines. The Manager
-survives to the end without context compaction or survives it without losses: every event starts by reading
-`task.json` and `lanes/*/state.md` (v5, rule 17).
+A gone worker is **replaced**, on the user's turn, by a new session (`lipok-<tid>-l<N>-r<k>`) that
+continues from `lane-state.md`, `plan.md` and the open PR; uncommitted work is lost. After a restart
+all watches are gone: the user's "resume" makes the Manager re-read the state, re-verify READY PRs,
+re-arm the watches, send `RESUME` to each worker, and break locks of workers that no longer run.
 
-## 9. The bottleneck — merges
+## Decisions and blocking
 
-Two lanes with a PR per item produce a stream of merges; the task's pace is set by the user.
+No agent decides a refuted premise, a choice between non-equivalent solutions, widening or
+splitting an item or chunk, a change outside the area, the shape of a public API, a contract
+change, or a plan rule the measurements contradict. The Manager alone may `GO` a fitting plan,
+`REDIRECT` within scope, order chunks the plan leaves open, and hand a chunk to a free lane.
 
-- The Manager sends ready PRs **in a batch**, in order: dependencies first, then PRs with overlapping
-  files back to back.
-- A worker may bundle two or three small related items into one PR, if the chunk plan was
-  approved that way (`GO`).
-- The profile's `max_ready_prs`: once the limit is reached, workers bring the current item to READY and wait.
+1. The executor writes the question in its report (`STATUS: DECISION`; options, recommended first,
+   and what each changes) and returns `ITEM DECISION`. At the plan stage the worker writes a note.
+2. The worker sends `DECISION <key> — <report>`. The Manager's `lipok.py line` opens the decision
+   wait; `chunk-status=DECISION`.
+3. The Manager notifies and asks the user, then **writes the record before answering**:
+   `decisions/DR-NNN.md` with the question, the options, the user's words verbatim, and what it
+   changes in the plan.
+4. Inside the chunk's scope the answer goes down as `DECISION <key> — <DR>`, and a new executor
+   gets it in `KNOWN:`. An answer that changes scope or the cut becomes a new brief or a `REDIRECT`
+   naming the DR, plus a `NOTE` to each lane it touches.
+5. `lipok.py line … ANSWERED` closes the wait and adds its minutes to `decision-wait-min`.
 
-## 10. Unverified assumptions — probes before building
+`BLOCKED` takes the same path for things needing an outside action: a closed PR, a review thread a
+person opened, a required check that never started, a repeated infrastructure failure. The answer
+returns as `RESUME <key> — <note>` or `DECISION`, or as a drop: a `REDIRECT` dropping the item, or
+`STOP` and `chunk-status=DROPPED` for the chunk.
 
-| # | Assumption | How to check | If not so |
-|---|---|---|---|
-| P1 | The worker's subagent carries an item through entirely: edit, tests, commit, `gh pr create` | one pilot item | **verified 2026-11-11 (partial pilot): yes** — the executor carried a real item (nine findings) to a draft PR on its own: 51 minutes, two review rounds, 153 tests, 26 of 26 sabotages |
-| P2 | A subagent can launch its own subagent (cold review) | **verified 2026-11-11: yes** — the subagent called `Agent` and got an answer; its background `Bash` also returned a result | — |
-| P3 | A long run (gate, waiting for CI) is awaited by the worker with its watch, not by the subagent | pilot: a gate longer than 10 minutes | — (that is the design; what is checked is that the worker wakes up from the watch) |
-| P4 | The worker's context holds a chunk of ~20 items: reports, PR events, compaction | pilot, metric: transcript size per item, quality after compaction | a smaller chunk; or worker-per-chunk: a new worker for each chunk (on the user's turn) |
-| P5 | Clearing the worker between chunks | session-clearing probes, if needed | a new worker per chunk |
+## Parallel lanes and collisions
 
-## 11. Rollout plan
+- **The cut** gives chunks of one wave disjoint files.
+- **AREA enforcement**: each brief carries the cut's `AREA` verbatim; `verify-pr --area` refuses a
+  PR with any file outside it.
+- **SYNC after merges**: the Manager compares each merge's files with other lanes' open PRs
+  (`gh pr view <n> --json files`) and sends `SYNC` on overlap. With a clean cut this happens only
+  across `AFTER`.
+- **The merge queue**: READY PRs go to the user in order — dependencies first, then PRs touching
+  the same files back to back. Over `max_ready_prs`, the Manager tells the user.
+- **Machine-wide locks** for indivisible resources (`resources` in the profile, `RESOURCES` in the
+  cut): `lipok.py lock acquire|release <resource> --holder <key> --repo R`, held only around the
+  run that needs it. A holder is the repository plus the item key without its attempt, so a retry
+  keeps its lock. Only the Manager breaks a dead holder's lock (`lock break <resource> --by manager`), logged.
+- **Per-lane environment**: `lane_env` gives each lane its own values (a port) via
+  `lipok.py lane-env`; `lane_setup` and `lane_teardown` run per lane.
 
-**Implementation of step A (2026-11-11):** the `lipok` skill was rewritten for v6 — `references/item.md`
-(executor), `worker.md` (the worker leads the chunk), `lane.md` and `manager.md` (the Manager side, supervision),
-`lipok.py` (`chunk`, item state kept by the worker in `chunks/<K>/lane-state.md`, `verify-pr`,
-`stall-check`; 47 tests; a cold consistency review — 11 findings fixed).
+## Cost
 
-**Partial pilot (2026-11-11).** The Manager and worker roles were played by one session (the turn came from the phone, and sessions cannot be started from such a turn), while a real item was carried out by an executor subagent in a separate worktree. Outcome: a PR, gate `GATE PASS`, CI green, `verify-pr` OK for both the worker and the Manager. Verified: P1, P2, the report format, `verify-pr` on a real PR, the READY path. Found and fixed: a note line of the wrong form (the brief did not name `note_field`) — now the brief carries `NOTE FIELD:`, and `verify-pr` requires that line; the reviewer left a service folder in the tree — a rule in `item.md`; a heredoc with slashes and quotes breaks in Bash — a rule in `SKILL.md`. Not verified: separate sessions, watches and supervision, wake-ups, the worker's context over a chunk (P3, P4) — that is the full pilot.
+The Manager wakes only on events — a worker's line or a watch's exit — and reads a few lines each
+time; watches cost nothing while they wait. Workers spend their turns on coordination. Executors
+do the bulk of the tokens.
 
-**Full pilot (2026-11-12).** One chunk of a real project (five items and a defect the user found in production during the chunk): a separate worker session in its own worktree, executors in the background, 6 PRs, all merged by a human; the task was closed with `final.md`. Verified: lines in both directions, `GO`/`READY`/`MERGED`/`DECISION`/`BLOCKED`/`NOTE`/`CHUNK_DONE`, two decisions via DR, the production defect as a `NOTE` → a new item, the Manager read neither diffs nor CI logs. Findings and fixes (2026-11-13): (1) `stall-check` counted planned batches as a loop — now `item --attempts N` and the plan line `· attempts: N`; (2) `verify-pr` did not know about required checks — the profile field `required_checks`; (3) `wait-pr.sh` reported `CI-GREEN` before the deploy check had appeared — now it waits for the required ones and says `CI-MISSING`; (4) `watch-session.sh` fired immediately on re-arming — silence is now counted from arming; (5) sessions cannot be started from a turn that came from the phone (Remote Control has nothing to do with it); (6) the Manager forgot the `progress-line` mark on `MERGED` → a false `STALL QUIET` — marks are set by `lipok.py line`, booking by `lipok.py book`, READY by `verify-pr --lane`; (7) merge wait time was not recorded — the fields `merge-wait-min`, `decision-wait-min` in the lane state. Pilot overhead (`lipok.py usage` over the transcripts, relative cost): Manager 8%, the worker's own turns 7%, executors and review 85% — coordination ≈15%; every task's `final.md` records this breakdown.
+`lipok.py usage <task> --manager <the Manager's working directory>` measures the split from the
+transcripts on disk, with no model call: manager, worker (own turns) and executors, each with a
+share of relative cost, and a `COORDINATION` percentage. Its lines go into `final.md` with the
+task's metrics: time from deployment to the last merge, PRs merged, and minutes lanes waited on
+merges and decisions.
 
-**Step A — a pilot on one lane.** The remaining items of a real task form one chunk; the worker leads
-them itself via subagents per section 5; the Manager acts per sections 3 and 8. Needed: the worker-lead role
-(`references/worker.md` → the chunk loop + `references/item.md` for the executor), `lipok.py verify-pr`
-and `lipok.py stall-check`, the profile fields `progress_window_h` and `max_attempts`, the supervision of section 3a,
-the messages of section 6, a chunk-level `lanes/state.md`.
-**Done when:** the chunk is closed; over the whole chunk the Manager read not a single CI log or diff; at least one
-course correction or `verify-pr` check fired for a real reason; every worker failure during the pilot (dead
-turn, silence, limit — whatever happens) was noticed by supervision, not by the user; P1–P4 got an answer.
+## Limits and assumptions
 
-**Step B, the cut — written 2026-11-14:** `references/decomposition.md` (the scout, seams and contracts, chunks `contract`/`foundation`/`impl`/`assembly`, hot files have a single owner, a cut file with `AREA`/`AFTER`, handing out by waves) and `lipok.py cut-check` — mechanically checks that chunks of one wave share no file (via `git ls-files` and via globs), that `AFTER` has no cycles and that an item is in one chunk; prints `CUT OK lanes=<n>` (the width of the widest wave, no more than `max_lanes`). The "one lane for now" ban was lifted in `manager.md` and `/lipok-task`. Not yet verified live.
-
-**Step B — two lanes.** A real "contract + two sides" pair (for example, the backend and frontend of one
-feature): `references/decomposition.md`, the scout, `lane_env` per lane, the merge queue in batches,
-`NOTE` between lanes, review of the contract chunk and of the assembly.
-**Done when:** the contract was merged first; two lanes closed their chunks in parallel; the assembly wired them together,
-the feature is enabled; the three v5 metrics (section 22) are in `final.md`.
-
-**Step C — tuning by metrics:** chunk size, number of lanes (up to three), PR grouping.
-
-## 12. Deferred
-
-- **The three-level scheme (v5, sections 3, 9, 10, 27).** Return to it only if at step B
-  the Manager cannot hold three lanes even with per-chunk reports. At that point also choose between the
-  "start" phrase and option "b".
-- **A pipeline inside a lane (v5, section 10).** Return to it if at step B lanes noticeably wait for merges.
-- **The "Hierarchy" mod (v5, section 25)** — after step B; in the flat scheme it is a list of lanes and chunks.
-
-## 13. Open questions
-
-- How many items in a chunk a worker can hold (P4) — this determines whether a new worker is needed for
-  each chunk.
-- Whether a `REDIRECT` is needed in the middle of an item (currently — only between items and on the chunk plan).
-- Confirm or reject the Manager's autonomy (v5, section 13): in v6 it matters more, because
-  the Manager corrects the course more often.
+- **Only the human merges**, and each lane has one open PR at a time: the task moves at the
+  user's merge pace.
+- **One level of coordination**: lanes are flat under one Manager, with no tier in between.
+- **The Claude Code desktop app is required** for its session tools (`start_session`,
+  `get_session`, `list_sessions`, `SendMessage`, `PushNotification`). It starts sessions only on a
+  turn the user began, so lanes are deployed and replaced on the user's turn.
+- **GitHub only**, through `gh`.
+- **Developed on Windows with Git Bash.** The scripts are bash and Python; other platforms should
+  work but are less exercised.
+- **Multi-lane runs are not yet exercised live.** A single lane has run end to end on a real
+  project; the cut, `cut-check` and parallel lanes are implemented and script-tested only.
+- **A worker's context over a long chunk** is kept small by short chunks and fresh executors; how
+  many items one worker holds well is still being measured.

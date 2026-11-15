@@ -5,8 +5,7 @@ decisions and where every lane stands, and it keeps that picture for the whole t
 outcomes, not steps. It cuts the task into chunks, hands them to workers, checks each chunk plan
 against the whole picture, corrects a lane's course, verifies what workers call ready, carries
 decisions, keeps the merge queue, watches that workers are alive, and is the only sender of phone
-notifications. It never does item work. Lanes: `references/lane.md`. Design:
-`docs/architecture.md` of the Lipok repository (github.com/DemchaAV/Lipok).
+notifications. It never does item work. Lanes: `references/lane.md`.
 
 **Every event starts with reading state**: `task.json` and every `lanes/*/state.md` of the active
 task. Your context may have been compacted; the files have not.
@@ -18,7 +17,7 @@ task. Your context may have been compacted; the files have not.
 | `task.json` (`lipok.py task-set`) | Manager |
 | `lanes/<N>/state.md` (`lipok.py chunk`, `set`) | Manager |
 | the task's plan (`crlf-replace.py` when it has CRLF line ends) | Manager |
-| `chunks/<K>/brief.md`, `chunks/<K>/notes/*` | Manager |
+| `chunks/<K>/brief.md`, `chunks/<K>/notes/*` | Manager (the worker adds `notes/decision-<n>.md` at the plan stage) |
 | `decisions/DR-NNN.md` | Manager, append only |
 | `reviews/GR-NNN.md` | the chunk reviewer the Manager starts |
 | `chunks/<K>/plan.md`, `lane-state.md`, `briefs/`, `done.md` | the worker |
@@ -26,26 +25,17 @@ task. Your context may have been compacted; the files have not.
 
 ## The cut
 
-A chunk is a closed sub-task: after its last PR the base builds and works. Cut by **areas of
-code**, not by item numbers: each chunk gets its own files, and two lanes never change one file. A
-seam two chunks share (an API, types, a data schema) is a small contract chunk merged first; the
-others only read it.
-
 How to cut, the cut file and the waves: `references/decomposition.md` — read it before cutting.
-In short: a scout maps the code and its hot files; seams get contracts CI checks; chunks are
-`contract` / `foundation` / `impl` / `assembly` with an `AREA` and `AFTER`; the cut goes to a file
-and `lipok.py cut-check` must print `CUT OK lanes=<n>` — chunks of one wave never share a file.
-Run as many lanes as that number, and one lane when the parts overlap. Show the user the cut;
-hand out after their "yes". A task already running with one lane keeps its cut.
+Chunks of one wave never share a file; run as many lanes as `cut-check` prints.
 
 ## Deploying lanes
 
-On the user's turn only (the app refuses starts on automated turns). For each lane `N` of
+On the user's turn only (`lane.md`, "Start the worker"). For each lane `N` of
 `task.json`'s `lanes`:
 1. If the profile has `lane_env`: `lipok.py lane-env --repo <repo> --lane <N>`; if it has
    `lane_setup`, run it with `{N}`.
 2. Start the worker (`lane.md`, "Start the worker").
-3. When its line `LANE <N> <folder>` comes, `set worker-dir`, then hand out its first chunk.
+3. On its line `LANE <N> <folder>`, hand out its first chunk (`lane.md`).
 
 ## Decisions
 
@@ -61,17 +51,12 @@ and what each changes), or from your own reading of a plan or a line that needs 
    brief (or a `REDIRECT` with a note naming the DR) and, if other lanes are touched, a `NOTE` to
    each. Either way: `set chunk-status=WORKING`, `$A line $L ANSWERED` (closes the decision wait), re-arm the stall watch (it stopped at `STALL IDLE`), record the decision and its date in the plan.
 
-Not the worker's and not yours: a refuted premise, two non-equivalent solutions, widening or
-splitting an item or a chunk, the shape of a public API, a contract change, a plan rule the
-measurements contradict. Yours alone: `GO` on a plan that fits, `REDIRECT` that keeps a lane
+Not the worker's and not yours: the list in SKILL.md, "Rules". Yours alone: `GO` on a plan that fits, `REDIRECT` that keeps a lane
 inside its scope, the order of chunks when the plan does not fix it, handing the next chunk to a
 free lane.
 
 ## Telling the user
 
-- The outcome first, then numbers and a link; no retelling of the work.
-- Talk to the user in their language. The phrases below are given in English; the user may say
-  them in any language — match the meaning.
 - `PushNotification` only for: a PR READY (verified); a decision needed; something blocked; a
   supervision alarm (`lane.md`, "Supervision"); the system stopped (a session to replace, a limit).
 - A chunk plan accepted, a chunk done: three to five lines in the chat; no notification.
@@ -79,15 +64,13 @@ free lane.
 ## The merge queue
 
 READY PRs in the order to merge: dependencies first, then PRs that touch the same files back to
-back (`gh pr view <n> --json files`). With one lane the queue is the one PR. Over `max_ready_prs`
-READY at once: tell the user; workers finish the item in hand and wait.
+back (`gh pr view <n> --json files`). With one lane the queue is the one PR. Over `max_ready_prs` READY at once (default: `max_lanes`): tell the user the queue is full; nothing changes for the workers — each lane already waits for its own PR's merge before its next item.
 
 ## The chunk reviewer
 
 For a contract chunk (before its PR merges), the assembly chunk (before the PR that switches the
 feature on), and any chunk the user asks for: an `Agent` (`general-purpose`) held to the
-`review_skill` bar, given the chunk brief, `done.md` and the merged diff of the chunk's PRs
-(`gh pr diff <n>` for each), never the worker's reasoning. Its verdict goes to `reviews/GR-NNN.md`;
+`review_skill` bar, given the chunk brief, the chunk's `done.md` when there is one, and the diff of the PRs under review (`gh pr diff <n>` — open or merged), never the worker's reasoning. When: a contract chunk's PR and the assembly PR that switches the feature on are reviewed at their `READY`, before you call them ready to merge; any other chunk the user asks for, at its `CHUNK_DONE`. Its verdict goes to `reviews/GR-NNN.md`;
 a finding that needs work becomes a new item only after the user's yes.
 
 ## "status"
@@ -137,6 +120,4 @@ Read the state and answer in a few lines, one per lane, then what waits on the u
 | A dead worker holds a lock | `lipok.py lock break <resource> --by manager` (logged in `~/.lipok/locks/broken.log`) |
 | PR closed without merge | the worker reports `BLOCKED`; ask: reopen, redo, drop |
 | Base branch red after a merge | hand out nothing new; tell the user with the failing run; a fix is a new item after their yes |
-| Your own context compacted | read the state before acting on any event |
-| This Manager session lost | the user types `/lipok-task` in a new session; it reads `active` and the state, sees that `task.json`'s `manager` is not its own id, and writes `task-set manager=<its id>` first. The old workers answer to the old Manager's id from their briefs, and a new session can neither clear them nor claim their trust (2026-11-03): tell the user, offer to archive the old lane sessions, and — on their yes, on this user turn — replace every lane's worker (`lane.md`, "Replace a worker") |
-| A v5 task (no `"arch": "v6"` in `task.json`) | its lanes carry item-level fields. Move it: on the user's turn, replace the worker, `lipok.py chunk` the remaining items as a new chunk number (v5 used `K1`: take `K2`, so old reports and slugs stay apart; `--force` only if the lane shows an unfinished v5 chunk), `task-set arch=v6`. A v5 item left `[~]` or `BLOCKED` goes into the chunk as a plan line like any other; its old brief is `KNOWN:` |
+| This Manager session lost | the user types `/lipok-task` in a new session, which takes the task over (`lipok-task`, step 3). The old workers answer to the old Manager's id from their briefs, and a new session can neither clear them nor claim their trust: tell the user, offer to archive the old lane sessions, and — on their yes, on this user turn — replace every lane's worker (`lane.md`, "Replace a worker") |

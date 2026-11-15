@@ -30,14 +30,14 @@ list of names.
 | `dashboard_html` | | where `plan_status.py --html` writes the plan's dashboard |
 | `ask_first` | | kinds of items the Manager asks about before handing out |
 | `infra_failures` | | CI failure signs that are not the change's fault (re-run once) |
-| `required_checks` | | names of the CI checks every PR must show (e.g. `["test", "deploy-preview"]`); `verify-pr` fails while one is not registered, `wait-pr.sh` says `CI-MISSING` instead of `CI-GREEN` (2026-11-12) |
+| `required_checks` | | names of the CI checks every PR must show (e.g. `["test", "deploy-preview"]`); `verify-pr` fails while one is not registered, `wait-pr.sh` says `CI-MISSING` instead of `CI-GREEN` |
 | `resources` | | shared, indivisible resources (e.g. `word`); workers lock them with `lipok.py lock` |
 | `long_run_process` | | a hint for finding a long run's process, e.g. `ps -W \| grep java`; it may match other projects, so the run's own output file decides |
 | `lane_env` | | per-lane environment templates, `{N}` = the lane number; `"3100+{N}"` adds |
 | `lane_setup` / `lane_teardown` | | commands run per lane at deployment / at the end, with `{N}` |
 | `item_profiles` | | `{ "<name>": "<path to the item profile>" }` |
-| `max_lanes`, `max_ready_prs` | | how many lanes at once; how many READY PRs may wait on the user. Both default to 1: without `max_lanes`, `cut-check` caps every cut at one lane (it prints a `NOTE`) |
-| `progress_window_h` | | the stall watch: hours without a line from a worker before the Manager asks (default 3) |
+| `max_lanes`, `max_ready_prs` | | how many lanes at once; how many READY PRs may wait on the user. `max_lanes` defaults to 1 and `max_ready_prs` to `max_lanes`: without `max_lanes`, `cut-check` caps every cut at one lane (it prints a `NOTE`) |
+| `progress_window_h` | | the stall watch: hours without a progress line from the worker (`PLAN`, `READY`, `MERGED`, `CHUNK_DONE`; an `ALIVE` does not count) before the Manager asks (default 3) |
 | `max_attempts` | | the stall watch: attempts on one item before it counts as a loop (default 3) |
 | `sabotages` | | `false` turns off `verify-pr`'s demand for caught sabotages on code changes (default `true`) |
 
@@ -59,5 +59,4 @@ kind* adds to `item.md` and `worker.md`. Sections, each optional; the step numbe
   the profile's `rules_file`.
 
 Keep the core's rules out of it: an item profile adds, it never repeats or overrides `item.md` or
-`worker.md`. Older item profiles name steps of the v5 `worker.md` (1.5, 11, 14): read them as
-before any change, before ready, pause cleanup.
+`worker.md`.
