@@ -14,6 +14,8 @@ Two state files per lane (v6):
 Commands (each prints its result; the last line is the one to read):
   root        --repo R                         the project folder
   profile     --repo R                         project.json after checking it
+  profile-set --repo R key=value ...           change profile fields (a value that parses as JSON
+                                               is JSON); writes nothing unless still valid
   task-new    --repo R --title T [--plan PATH] [--lanes N] [--item-profile PATH]
                                                create a task, make it active, print its folder
                                                (flat scheme only; the three-level one is deferred)
@@ -74,8 +76,9 @@ Commands (each prints its result; the last line is the one to read):
                                                (the main checkout's git ls-files, or --files) nor
                                                overlapping AREA globs; AFTER must name chunks and
                                                hold no cycle; an item sits in one chunk only;
-                                               prints CHUNK / WAVES lines, then CUT OK lanes=<n>
-                                               or CUT FAIL <reasons> (exit 4)
+                                               prints CHUNK / WAVES lines, a LANES line (how many
+                                               rounds each number of lanes takes), then CUT OK
+                                               lanes=<n> or CUT FAIL <reasons> (exit 4)
   usage <task folder> [--manager <dir|file|cwd>]... [--worker <dir>]... [--since T] [--until T]
                                                who spent the tokens, from the transcripts on disk
                                                (no model call): manager, worker (own turns),
@@ -376,6 +379,13 @@ def cmd_profile(args):
     missing = [k for k in PROFILE_REQUIRED if k not in data]
     if missing:
         raise Refused(f"PROFILE INCOMPLETE missing={','.join(missing)}")
+    bad = profile_problems(data)
+    if bad:
+        raise Refused(f"PROFILE INVALID {', '.join(bad)} (numbers must be positive integers)")
+    print(f"PROFILE OK {show_path(p)}")
+
+
+def profile_problems(data):
     bad = [k for k in PROFILE_INTS if k in data
            and not (isinstance(data[k], int) and not isinstance(data[k], bool) and data[k] > 0)]
     rc = data.get("required_checks")
@@ -384,8 +394,34 @@ def cmd_profile(args):
     a = data.get("author")
     if not (isinstance(a, dict) and a.get("name") and a.get("email")):
         bad.append("author (needs name and email)")
-    if bad:
-        raise Refused(f"PROFILE INVALID {', '.join(bad)} (numbers must be positive integers)")
+    return bad
+
+
+def cmd_profile_set(args):
+    """Change fields of an existing profile. A value that parses as JSON is JSON (3, true,
+    ["a","b"], {"name":"n","email":"e"}); anything else is a string. Nothing is written unless the
+    whole profile is still valid."""
+    repo = opt(args, "--repo")
+    pairs = parse_pairs(args)
+    if not pairs:
+        raise Usage("profile-set --repo R key=value ...")
+    if "repo" in pairs:
+        raise Refused("REFUSED repo cannot change; a profile belongs to one repository")
+    p, _ = load_profile(repo)
+    with file_lock(p):
+        data = read_json(p)
+        old = {k: data.get(k) for k in pairs}
+        for k, v in pairs.items():
+            try:
+                data[k] = json.loads(v)
+            except ValueError:
+                data[k] = v
+        bad = profile_problems(data) + [k for k in PROFILE_REQUIRED if k not in data]
+        if bad:
+            raise Refused(f"REFUSED the profile would be invalid: {', '.join(bad)}")
+        write_atomic(p, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    for k in pairs:
+        print(f"SET {k}: {json.dumps(old[k], ensure_ascii=False)} -> {json.dumps(data[k], ensure_ascii=False)}")
     print(f"PROFILE OK {show_path(p)}")
 
 
@@ -1278,6 +1314,13 @@ def cmd_cut_check(args):
     for cid in ids:
         waves.setdefault(depth(cid), []).append(cid)
     width = max((len(v) for v in waves.values()), default=0)
+    # A "round" is one chunk's run on one lane; a wave of n chunks on L lanes takes ceil(n/L)
+    # rounds, and the waves run one after another. Lanes past the widest wave buy nothing.
+    rounds = lambda n_lanes: sum(-(-len(v) // n_lanes) for v in waves.values())
+    options = []
+    for n in range(1, width + 1):
+        if not options or rounds(n) < options[-1][1]:
+            options.append((n, rounds(n)))
     for cid in ids:
         c = chunks[cid]
         nf = f" files={len(c['files'])}" if "files" in c else ""
@@ -1289,6 +1332,9 @@ def cmd_cut_check(args):
         print(f"NOTE {n}")
     if fails:
         raise Refused("CUT FAIL " + "; ".join(fails))
+    if options:
+        print("LANES " + " | ".join(f"{n} lane{'s' if n > 1 else ''}: {r} round{'s' if r > 1 else ''}"
+                                    for n, r in options) + f" (fastest: {width})")
     print(f"CUT OK lanes={max(1, min(width, max_lanes))} (width {width}, max_lanes {max_lanes})")
 
 
@@ -1463,7 +1509,7 @@ def cmd_usage(args):
 
 
 COMMANDS = {
-    "usage": cmd_usage, "cut-check": cmd_cut_check,
+    "usage": cmd_usage, "cut-check": cmd_cut_check, "profile-set": cmd_profile_set,
     "root": cmd_root, "profile": cmd_profile, "task-new": cmd_task_new,
     "task-active": cmd_task_active, "task-set": cmd_task_set, "task-close": cmd_task_close,
     "item": cmd_item, "bump": cmd_bump, "get": cmd_get, "set": cmd_set, "show": cmd_show,

@@ -1,6 +1,8 @@
 # Project profile
 
-`~/.lipok/projects/<owner>-<repo>/project.json` tells the core everything project-specific. The
+`~/.lipok/projects/<owner>-<repo>/project.json` tells the core everything project-specific.
+Change it with `lipok.py profile-set --repo <owner/repo> key=value …` (the user's "profile" in the
+Manager's session), never by hand. The
 core's texts never name a stack; they name these fields. `lipok.py profile --repo <owner/repo>`
 prints and checks it: required fields, `author` with name and email, and whole positive numbers
 for `quiet_window_min`, `gate_minutes`, `max_lanes`, `max_ready_prs`, and `required_checks` as a

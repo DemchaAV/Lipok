@@ -58,18 +58,23 @@ In the project's folder, in the Claude Code app:
 /lipok-task docs/plans/my-plan.md        a plan with a "## Progress" checklist
 /lipok-task add CSV export to reports    free text: the Manager drafts the plan first
 /lipok-task                              the active task's status, or resume after a restart
+/lipok-task status | pause | resume | stop    control the active task
+/lipok-task profile                      show or change the project profile
 ```
 
 1. **First run in a project:** the Manager drafts the project profile
    (`~/.lipok/projects/<owner>-<repo>/project.json`: the gate command, base branch, commit author,
    required CI checks, `max_lanes`, …) and writes it after your "yes". Fields:
-   [`project-profile.md`](skills/lipok/references/project-profile.md). Set `max_lanes` above 1 to
-   allow parallel lanes.
-2. **The cut:** the Manager shows the chunks, their waves and file areas, and how many lanes they
-   can use. It starts the workers after your "yes".
+   [`project-profile.md`](skills/lipok/references/project-profile.md); change them later with
+   `/lipok-task profile`.
+2. **The cut and the lanes:** the Manager shows the chunks, their waves and file areas, and what
+   each number of lanes buys — for example *1 lane: 7 rounds · 3 lanes: 4 rounds · 5 lanes: 3
+   rounds (fastest)*. You pick the number; the workers start after your "yes". More lanes finish
+   sooner and spend about the same tokens in total, but use your plan's limit faster and bring more
+   pull requests for you to merge at once.
 3. **While it runs:** approve chunk plans when asked, answer decisions, merge the pull requests it
-   calls ready. In the Manager's session you can say "status", "merged", "pause", "resume" or
-   "stop task" — in any language.
+   calls ready. In the Manager's session you can say "status", "merged", "pause", "resume",
+   "stop task" or "profile" — in any language.
 
 Everything a task keeps is under `~/.lipok`: project profiles, task state, briefs, reports,
 decisions and machine-wide locks. It is safe to delete when no task is active.

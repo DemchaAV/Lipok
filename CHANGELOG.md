@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- The user chooses the number of lanes before a task starts: `cut-check` prints a `LANES` line
+  with the rounds each number of lanes takes, and the Manager asks with the fastest option first.
+- `lipok.py profile-set` and the `profile` phrase: change the project profile after the first run.
+- `/lipok-task status | pause | resume | stop | profile` act on the active task instead of being
+  read as a new task.
+
 ### Fixed
 - `cut-check` no longer passes overlapping chunks: repeated or wrapped `AREA` lines are added,
   unknown headings and lines inside a chunk are refused, brace/`./`/trailing-slash globs are

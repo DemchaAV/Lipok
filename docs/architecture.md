@@ -102,10 +102,14 @@ rather than by care.
    `AREA`, `AFTER`, `ITEMS`, `RESOURCES`, `DONE WHEN` and, for contracts, `SEAMS`.
 5. `lipok.py cut-check` enforces the rule: chunks not ordered by `AFTER` may not share a file (from
    the main checkout's `git ls-files`) nor overlapping `AREA` globs; `AFTER` must name real chunks
-   with no cycle; each item sits in one chunk. It prints `CUT OK lanes=<n>` — the widest wave,
-   capped by the profile's `max_lanes` — or `CUT FAIL <reasons>`. A failing cut is never handed out.
-6. The user sees the chunks, waves, areas, seams with their CI checks, lanes, and what stays
-   sequential; the task starts only after their "yes".
+   with no cycle; each item sits in one chunk. It prints a `LANES` line — how many rounds each
+   number of lanes takes, a round being one chunk's run on one lane — then `CUT OK lanes=<n>` (the
+   widest wave capped by the profile's `max_lanes`, a default) or `CUT FAIL <reasons>`. A failing
+   cut is never handed out.
+6. The user sees the chunks, waves, areas, seams with their CI checks and what stays sequential,
+   and chooses the number of lanes from the `LANES` options — the fastest first, with what more
+   lanes cost (the usage limit burns faster; more pull requests wait on the user at once). The
+   task starts only after their "yes".
 
 **One lane is often the right answer**: when the widest wave is 1, a side of a seam would get
 fewer than two items, the areas cannot be separated without a check the project lacks, or the task

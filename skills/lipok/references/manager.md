@@ -110,6 +110,14 @@ Read the state and answer in a few lines, one per lane, then what waits on the u
 - **"next chunk"** — a lane with nothing on it (`chunk-status` `DONE`, `DROPPED` or `none`)
   → hand out the next chunk; otherwise say what each lane is doing.
 
+## "profile"
+
+`$A profile --repo <repo>`: show the fields as a short table. A change the user asks for: say what
+it changes, and after their "yes" `$A profile-set --repo <repo> <key>=<value> …` (a number, a list
+or an object as JSON: `max_lanes=5`, `required_checks='["test","deploy"]'`). It refuses a change
+that would leave the profile invalid. A running task picks up `max_attempts`, `progress_window_h`
+and `quiet_window_min` at the next re-arm of its watches; `max_lanes` matters at the next cut.
+
 ## When something breaks
 
 | Failure | What to do |

@@ -44,17 +44,28 @@ enforces it mechanically; `verify-pr --area` enforces each chunk's area on every
 7. **Check it:** `$A cut-check <project>/cut-draft.md --repo <repo>`. It compares the areas against
    the main checkout's files (`git ls-files`) and against each other as globs. `CUT FAIL` → fix the
    cut (narrow an area, move a hot file to its owner, add an `AFTER`) and check again; never hand
-   out a cut that fails. `CUT OK lanes=<n>` is the number of lanes: the widest wave, capped by the
-   profile's `max_lanes` (1 when the profile has none — set it).
-8. **One lane is right when** the widest wave is 1; a side of a seam would get fewer than two items
+   out a cut that fails. Its `LANES` line says what each number of lanes buys — `1 lane: 7 rounds | 3 lanes: 4 rounds |
+   5 lanes: 3 rounds (fastest: 5)`: a round is one chunk's run on one lane, and lanes past the
+   widest wave buy nothing. `CUT OK lanes=<n>` is that width capped by the profile's `max_lanes`
+   (1 when the profile has none); it is a default, not the answer — the user chooses (step 9).
+8. **Aim for parallel lanes** — the point of Lipok. A widest wave of 1 or 2 on a task with many
+   items means look again: split by module, screen, endpoint or layer, move the shared edits into a
+   contract chunk, and check again. **One lane is right only when** the widest wave stays 1; a side of a seam would get fewer than two items
    (too fine — one lane does both); the areas cannot be separated without a contract the project
    cannot check; or the task is a day's work. Say why in one line when you show the cut.
 9. **Show the user** and hand out only after their "yes":
    - a table: chunk, kind, wave, `AFTER`, area, items, acceptance;
    - each seam: the contract file and the CI check that holds it;
-   - the lanes: `CUT OK lanes=<n>` and the first wave's hand-out (chunk → lane);
+      - **the lanes — the user's choice.** Ask with `AskUserQuestion`: the fastest option first (the
+     `LANES` width), then one or two between, then 1 lane, each with its rounds from the `LANES`
+     line. Say what more lanes cost: the total tokens stay about the same, but the usage limit
+     burns that many times faster, and every lane brings PRs to merge — past about five lanes the
+     user's merging is the limit. Shared `RESOURCES` queue on their lock whatever the number. A
+     choice above the profile's `max_lanes` is fine for this task; offer to raise the profile's
+     too (`$A profile-set --repo <repo> max_lanes=<n>`);
+   - the first wave's hand-out (chunk → lane);
    - what stays sequential and why (the hot files and their owners).
-10. **After "yes"** and `task-new … --lanes <n>`, move the files into the task:
+10. **After "yes"** and `task-new … --lanes <the user's number>`, move the files into the task:
     `<project>/cut-draft.md` → `<task>/decomposition/cut.md`, the scout's report →
     `<task>/decomposition/scout.md`. The cut file is the Manager's from now on.
 

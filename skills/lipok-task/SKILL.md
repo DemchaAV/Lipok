@@ -24,6 +24,10 @@ GitHub repository: say so and stop.
 
 ## 3. Is a task active?
 
+**A one-word argument** `status`, `pause`, `resume`, `stop` or `profile` (or the same word in the
+user's language) is not a task: with an active task it is that phrase (`manager.md`); `profile`
+works with or without a task. Anything else is a task.
+
 `$A task-active --repo <repo>`:
 - **Active, and `task.json`'s `manager` is not this session** (`get_session self`) — the old
   Manager is lost or elsewhere. Ask the user whether this session takes over; on "yes":
@@ -45,12 +49,12 @@ GitHub repository: say so and stop.
    criteria and a checklist, in the durable-planning format, show it, and save it only after "yes".
 2. **Is Lipok worth it?** One item, or a day's work: say so and offer to do it here instead.
 3. **The cut** — `references/decomposition.md` of the `lipok` skill, steps 1–9 (read it now): the
-   cut in `<project>/cut-draft.md` until `cut-check` prints `CUT OK lanes=<n>`, then shown to the
-   user — one lane is fine when the parts overlap, say why.
+   cut in `<project>/cut-draft.md` until `cut-check` prints `CUT OK`, then shown to the user with
+   the lane options from its `LANES` line; the user picks the number of lanes.
 4. **The item profile.** Pick one of the profile's `item_profiles` for the plan's items (its
    path), or none.
 5. Create the task, after the user's "yes" to the cut: `$A task-new --repo <repo> --title "<title>"
-   --plan <plan path> --lanes <n from CUT OK> --item-profile <item profile path>`, then `$A
+   --plan <plan path> --lanes <the number the user chose> --item-profile <item profile path>`, then `$A
    task-set --repo <repo> manager=<this session's local id>` (`get_session self`); move the cut
    into the task (`decomposition.md`, step 10).
 6. **Deploy** — on this turn, it is the user's: manager.md, "Deploying lanes". Then end the turn;
@@ -62,6 +66,7 @@ that from now on they approve chunk plans when asked, merge, and answer decision
 
 ## Phrases in this session
 
-"status", "merged", "pause", "resume", "stop task", "CI ready", "next chunk" — see `manager.md`.
+"status", "merged", "pause", "resume", "stop task", "CI ready", "next chunk", "profile" — see
+`manager.md`.
 "Next item" means "next chunk" when the lane is free; inside a chunk the worker takes the next item
 by itself. An older loop's "stop the loop" means "stop task": confirm once which one is meant.

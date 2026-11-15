@@ -448,4 +448,39 @@ t inst-node-copy 0 "" -- diff -rq "$PKG/skills/lipok" "$T/dest-node/lipok"
 t inst-sh-ok 0 "installed" -- env CLAUDE_SKILLS_DIR="$T/dest-sh" bash "$PKG/install.sh"
 t inst-sh-copy 0 "" -- diff -rq "$PKG/skills/lipok-task" "$T/dest-sh/lipok-task"
 t inst-uninstall 0 "removed" -- node "$PKG/bin/lipok.js" uninstall --dir "$T/dest-node"
+# --- lane options and profile-set (2026-11-15) ---
+cut <<'M'
+## K1 contract — api
+AREA: src/api/**
+## K2 impl — a
+AREA: src/a/**
+AFTER: K1
+## K3 impl — b
+AREA: src/b/**
+AFTER: K1
+## K4 impl — c
+AREA: src/c/**
+AFTER: K1
+## K5 impl — d
+AREA: src/d/**
+AFTER: K1
+## K6 impl — e
+AREA: src/e/**
+AFTER: K1
+## K7 assembly — wire
+AREA: src/app.ts
+AFTER: K2, K3, K4, K5, K6
+M
+t lanes-options 0 "LANES 1 lane: 7 rounds | 2 lanes: 5 rounds | 3 lanes: 4 rounds | 5 lanes: 3 rounds (fastest: 5)" -- C --max-lanes 3
+t lanes-default 0 "CUT OK lanes=3 (width 5, max_lanes 3)" -- C --max-lanes 3
+cp "$P" "$T/profile.bak2"
+t pset-int 0 "SET max_lanes: null -> 5" -- $A profile-set --repo o/r max_lanes=5
+t pset-int-kept 0 '"max_lanes": 5' -- $A profile --repo o/r
+t pset-list 0 'SET required_checks: null -> ["test", "deploy"]' -- $A profile-set --repo o/r 'required_checks=["test","deploy"]'
+t pset-invalid 4 "would be invalid: max_lanes" -- $A profile-set --repo o/r max_lanes=0
+t pset-invalid-kept 0 '"max_lanes": 5' -- $A profile --repo o/r
+t pset-repo 4 "repo cannot change" -- $A profile-set --repo o/r repo=x/y
+t pset-string 0 "SET base_branch:" -- $A profile-set --repo o/r base_branch=develop
+t pset-usage 2 "profile-set --repo R" -- $A profile-set --repo o/r
+cp "$T/profile.bak2" "$P"
 echo "PASS=$PASS FAIL=$FAIL"
